@@ -1,14 +1,20 @@
 """LSG: Core evaluator - Data pattern learning & state evaluation."""
+import asyncio
 import logging
 import time
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Set
 from datetime import datetime, timedelta
 from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.const import EVENT_STATE_CHANGED
-from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.event import async_track_time_interval
 from .const import DOMAIN, HEALTH_OK, HEALTH_LATE, HEALTH_STALE, HEALTH_UNKNOWN
 
 _LOGGER = logging.getLogger(__name__)
+
+# Configuration for debounced persistence
+SAVE_DEBOUNCE_SECONDS = 30  # Wait 30s after last change before saving
+SAVE_MAX_WAIT_SECONDS = 300  # Force save every 5 minutes regardless
+
 
 class LSGEvaluator:
     """Evaluator with pattern learning and health monitoring."""
@@ -17,7 +23,14 @@ class LSGEvaluator:
         self._hass = hass
         self._learning_state: Dict[str, Dict] = {}
         self._unsubscribe = None
+        self._unsubscribe_timer = None
         self._storage = None
+        
+        # Debouncing state
+        self._pending_save = False
+        self._save_task: Optional[asyncio.Task] = None
+        self._last_save_time = 0
+        self._entities_changed: Set[str] = set()
         
     async def async_setup(self) -> None:
         """Initialize evaluator and load learning state."""
@@ -44,7 +57,15 @@ class LSGEvaluator:
             EVENT_STATE_CHANGED,
             state_changed_listener
         )
-        _LOGGER.info("Evaluator initialized")
+        
+        # Setup periodic forced save (every 5 minutes)
+        self._unsubscribe_timer = async_track_time_interval(
+            self._hass,
+            self._async_periodic_save,
+            timedelta(seconds=SAVE_MAX_WAIT_SECONDS)
+        )
+        
+        _LOGGER.info("Evaluator initialized with debounced persistence")
     
     async def _async_update_entity_learning(
         self, entity_id: str, state: State
@@ -96,11 +117,70 @@ class LSGEvaluator:
         entity_state["event_count"] += 1
         
         # Evaluate health
-        health = self._evaluate_health(entity_id)
-        entity_state["last_health"] = health
+        old_health = entity_state.get("last_health")
+        new_health = self._evaluate_health(entity_id)
+        entity_state["last_health"] = new_health
         
-        # Persist every 10 events or when health changes
-        if entity_state["event_count"] % 10 == 0:
+        # Track changed entity
+        self._entities_changed.add(entity_id)
+        
+        # FIXED: Use debounced save instead of saving every 10 events (WARNING #1)
+        # Only trigger immediate save if health changed to critical state
+        if old_health != new_health and new_health in (HEALTH_STALE, HEALTH_LATE):
+            _LOGGER.debug(
+                "Entity %s health changed to %s, triggering priority save",
+                entity_id,
+                new_health
+            )
+            await self._async_schedule_save(priority=True)
+        else:
+            # Normal debounced save
+            await self._async_schedule_save(priority=False)
+    
+    async def _async_schedule_save(self, priority: bool = False) -> None:
+        """
+        Schedule a debounced save operation.
+        
+        Args:
+            priority: If True, reduces debounce delay for critical changes
+        """
+        # Cancel existing save task if any
+        if self._save_task and not self._save_task.done():
+            self._save_task.cancel()
+        
+        # Determine delay
+        if priority:
+            delay = 5  # Priority saves happen in 5 seconds
+        else:
+            delay = SAVE_DEBOUNCE_SECONDS
+        
+        # Create new save task
+        async def _delayed_save():
+            try:
+                await asyncio.sleep(delay)
+                await self._async_save_learning_state()
+            except asyncio.CancelledError:
+                _LOGGER.debug("Save task cancelled (newer save scheduled)")
+            except Exception as e:
+                _LOGGER.exception("Error in delayed save: %s", e)
+        
+        self._save_task = self._hass.async_create_task(_delayed_save())
+        self._pending_save = True
+    
+    async def _async_periodic_save(self, now=None) -> None:
+        """
+        Periodic forced save (called every SAVE_MAX_WAIT_SECONDS).
+        
+        This ensures data is persisted even if debounce keeps delaying.
+        """
+        elapsed = time.time() - self._last_save_time
+        
+        if self._entities_changed and elapsed >= SAVE_MAX_WAIT_SECONDS:
+            _LOGGER.debug(
+                "Forcing periodic save (%d entities changed in last %d seconds)",
+                len(self._entities_changed),
+                int(elapsed)
+            )
             await self._async_save_learning_state()
     
     def _evaluate_health(self, entity_id: str) -> str:
@@ -143,11 +223,26 @@ class LSGEvaluator:
     
     async def _async_save_learning_state(self) -> None:
         """Persist learning state to storage."""
-        if self._storage:
-            try:
-                await self._storage.async_set("learning_state", self._learning_state)
-            except Exception as e:
-                _LOGGER.exception("Error saving learning state: %s", e)
+        if not self._storage:
+            return
+        
+        try:
+            # Save to storage
+            await self._storage.async_set("learning_state", self._learning_state)
+            
+            # Update tracking
+            self._last_save_time = time.time()
+            changed_count = len(self._entities_changed)
+            self._entities_changed.clear()
+            self._pending_save = False
+            
+            _LOGGER.debug(
+                "Learning state saved successfully (%d entities changed)",
+                changed_count
+            )
+            
+        except Exception as e:
+            _LOGGER.exception("Error saving learning state: %s", e)
     
     def get_entity_health(self, entity_id: str) -> str:
         """Get current health status for entity."""
@@ -166,7 +261,24 @@ class LSGEvaluator:
     
     async def async_unload(self) -> None:
         """Cleanup and save state."""
+        # Cancel any pending save task
+        if self._save_task and not self._save_task.done():
+            self._save_task.cancel()
+            try:
+                await self._save_task
+            except asyncio.CancelledError:
+                pass
+        
+        # Force final save
         await self._async_save_learning_state()
+        
+        # Unsubscribe from events
         if self._unsubscribe:
             self._unsubscribe()
             self._unsubscribe = None
+        
+        if self._unsubscribe_timer:
+            self._unsubscribe_timer()
+            self._unsubscribe_timer = None
+        
+        _LOGGER.info("Evaluator unloaded, final state saved")

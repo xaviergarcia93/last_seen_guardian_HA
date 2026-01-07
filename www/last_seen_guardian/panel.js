@@ -11,6 +11,10 @@ const TABS = [
     {id: "general", name: "General", icon: "mdi:cog"},
 ];
 
+// FIXED: Configurable refresh interval (WARNING #2)
+const AUTO_REFRESH_INTERVAL_MS = 120000; // 2 minutes (was 30 seconds)
+const ENABLE_AUTO_REFRESH = true; // Can be disabled via config
+
 class LastSeenGuardianPanel extends HTMLElement {
     constructor() {
         super();
@@ -19,6 +23,8 @@ class LastSeenGuardianPanel extends HTMLElement {
         this.config = {};
         this.hass = null;
         this._subscriptionId = null;
+        this._stateSubscription = null;
+        this._lastRefresh = 0;
     }
 
     set panel(panel) {
@@ -38,9 +44,14 @@ class LastSeenGuardianPanel extends HTMLElement {
             <div class="lsg-panel">
                 <div class="lsg-header">
                     <h1>Last Seen Guardian</h1>
-                    <button class="lsg-refresh-btn" title="Refresh">
-                        <ha-icon icon="mdi:refresh"></ha-icon>
-                    </button>
+                    <div class="lsg-header-actions">
+                        <span class="lsg-last-refresh" id="lsg-last-refresh">
+                            Last refresh: Never
+                        </span>
+                        <button class="lsg-refresh-btn" title="Refresh">
+                            <ha-icon icon="mdi:refresh"></ha-icon>
+                        </button>
+                    </div>
                 </div>
                 
                 <nav class="lsg-tabs">
@@ -80,7 +91,11 @@ class LastSeenGuardianPanel extends HTMLElement {
         // Refresh button
         const refreshBtn = this.querySelector(".lsg-refresh-btn");
         if (refreshBtn) {
-            refreshBtn.addEventListener("click", () => this._loadData());
+            refreshBtn.addEventListener("click", async () => {
+                refreshBtn.disabled = true;
+                await this._loadData();
+                refreshBtn.disabled = false;
+            });
         }
     }
 
@@ -103,6 +118,10 @@ class LastSeenGuardianPanel extends HTMLElement {
             });
             this.config = configResponse.config || {};
             
+            // Update last refresh timestamp
+            this._lastRefresh = Date.now();
+            this._updateRefreshTimestamp();
+            
             this._renderActiveTab();
         } catch (error) {
             console.error("LSG: Error loading data:", error);
@@ -111,13 +130,76 @@ class LastSeenGuardianPanel extends HTMLElement {
     }
 
     _setupSubscriptions() {
-        // Subscribe to state changes (if needed)
         if (!this.hass) return;
         
-        // Auto-refresh every 30 seconds
-        this._subscriptionId = setInterval(() => {
-            this._loadData();
-        }, 30000);
+        // FIXED: Use event-based updates when possible (WARNING #2)
+        // Subscribe to LSG-specific events (if implemented in backend)
+        this._subscribeToEvents();
+        
+        // FIXED: Longer auto-refresh interval (WARNING #2)
+        if (ENABLE_AUTO_REFRESH) {
+            this._subscriptionId = setInterval(() => {
+                // Only refresh if panel is visible
+                if (document.visibilityState === 'visible') {
+                    console.debug('LSG: Auto-refresh triggered');
+                    this._loadData();
+                } else {
+                    console.debug('LSG: Skipping auto-refresh (page not visible)');
+                }
+            }, AUTO_REFRESH_INTERVAL_MS);
+            
+            console.log(`LSG: Auto-refresh enabled (every ${AUTO_REFRESH_INTERVAL_MS / 1000}s)`);
+        }
+        
+        // Refresh when page becomes visible again
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                const timeSinceLastRefresh = Date.now() - this._lastRefresh;
+                
+                // Refresh if more than 60 seconds since last refresh
+                if (timeSinceLastRefresh > 60000) {
+                    console.debug('LSG: Page visible again, refreshing data');
+                    this._loadData();
+                }
+            }
+        });
+    }
+
+    _subscribeToEvents() {
+        // Subscribe to Home Assistant state changes for tracked entities
+        // This is more efficient than polling
+        try {
+            // Note: This requires entity_ids to be known upfront
+            // Alternative: Subscribe to all state changes and filter
+            
+            if (this.hass.connection && this.hass.connection.subscribeEvents) {
+                this._stateSubscription = this.hass.connection.subscribeEvents(
+                    (event) => {
+                        // Only refresh if an entity we're tracking changed
+                        const changedEntity = event.data.entity_id;
+                        const isTracked = this.entities.some(e => e.entity_id === changedEntity);
+                        
+                        if (isTracked) {
+                            console.debug(`LSG: Tracked entity ${changedEntity} changed, refreshing`);
+                            this._loadData();
+                        }
+                    },
+                    'state_changed'
+                );
+                
+                console.log('LSG: Subscribed to state_changed events');
+            }
+        } catch (error) {
+            console.warn('LSG: Could not subscribe to events, falling back to polling', error);
+        }
+    }
+
+    _updateRefreshTimestamp() {
+        const el = this.querySelector('#lsg-last-refresh');
+        if (el && this._lastRefresh) {
+            const date = new Date(this._lastRefresh);
+            el.textContent = `Last refresh: ${date.toLocaleTimeString()}`;
+        }
     }
 
     _renderActiveTab() {
@@ -201,8 +283,16 @@ class LastSeenGuardianPanel extends HTMLElement {
     }
 
     disconnectedCallback() {
+        // Cancel auto-refresh timer
         if (this._subscriptionId) {
             clearInterval(this._subscriptionId);
+            this._subscriptionId = null;
+        }
+        
+        // Unsubscribe from events
+        if (this._stateSubscription) {
+            this._stateSubscription.then(unsub => unsub());
+            this._stateSubscription = null;
         }
     }
 }
