@@ -1,0 +1,8 @@
+.lsg-panel { font-family: Arial, sans-serif; }
+.lsg-tabs { margin-bottom: 1em; }
+.lsg-tab { padding: 0.5em 1em; margin-right: 0.5em; }
+.lsg-tab-active { background: #16b3fa; color: #fff; border-radius: 3px; }
+.lsg-health-ok { color: green; }
+.lsg-health-late { color: orange; }
+.lsg-health-stale { color: red; }
+.lsg-sensors-tab table { width: 100%; }
