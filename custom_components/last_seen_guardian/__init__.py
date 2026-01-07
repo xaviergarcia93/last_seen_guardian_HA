@@ -1,84 +1,289 @@
+"""
+Last Seen Guardian Integration for Home Assistant.
+
+Monitors entity activity patterns, learns behavior using EWMA,
+and evaluates device health status.
+"""
 from __future__ import annotations
 
 import asyncio
 import logging
 from datetime import timedelta
+from typing import Optional
 
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.exceptions import ConfigEntryNotReady
 
-from .const import DOMAIN
-from .storage import LSGStorage
+from .const import DOMAIN, DEFAULT_CHECK_INTERVAL
 
 _LOGGER = logging.getLogger(__name__)
 
+
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    """Set up the Last Seen Guardian component from yaml configuration."""
     hass.data.setdefault(DOMAIN, {})
+    _LOGGER.info("Last Seen Guardian component initialized")
     return True
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Set up Last Seen Guardian from a config entry."""
+    _LOGGER.info("Setting up Last Seen Guardian integration")
+    
+    # Initialize domain data
     hass.data.setdefault(DOMAIN, {})
-
-    # Storage asíncrono
-    storage = await LSGStorage.async_create(hass)
-    hass.data[DOMAIN]["storage"] = storage
-
-    # WebSocket API
-    try:
-        from .websocket_api import async_setup_websocket
-
-        async_setup_websocket(hass)
-    except Exception as e:
-        _LOGGER.exception("Error registrando WebSocket API: %s", e)
-
-    # Panel
-    try:
-        from .panel import async_register_panel
-
-        await async_register_panel(hass)
-    except Exception as e:
-        _LOGGER.exception("Error registrando panel: %s", e)
-
-    # Evaluator loop (v0.5.0)
+    
+    # Track initialization state
+    hass.data[DOMAIN]["_ready"] = False
     hass.data[DOMAIN]["_unsub_eval"] = None
-
-    async def _run_eval(now=None) -> None:
-        """Run evaluation (no alerts yet)."""
-        try:
-            from .evaluator import async_run_evaluation
-
-            await async_run_evaluation(hass)
-        except Exception:
-            _LOGGER.exception("Error en evaluación periódica")
-
+    
     try:
-        cfg = await storage.async_get()
-        every_min = int(cfg.get("config", {}).get("global", {}).get("check_every_minutes", 15))
-        if every_min < 1:
-            every_min = 1
-    except Exception:
-        _LOGGER.exception("No pude leer check_every_minutes; uso 15")
-        every_min = 15
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # STEP 1: Initialize Storage Layer
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        _LOGGER.debug("Initializing storage layer...")
+        
+        from .storage import LSGStorage
+        
+        try:
+            storage = await LSGStorage.async_create(hass)
+            hass.data[DOMAIN]["storage"] = storage
+            _LOGGER.info("✓ Storage layer initialized")
+        except Exception as e:
+            _LOGGER.exception("Failed to initialize storage: %s", e)
+            raise ConfigEntryNotReady(f"Storage initialization failed: {e}") from e
+        
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # STEP 2: Initialize Registry (Entity Classification)
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        _LOGGER.debug("Initializing entity registry...")
+        
+        from .registry import LSGRegistry
+        
+        try:
+            registry = LSGRegistry(hass)
+            await registry.async_setup()
+            hass.data[DOMAIN]["registry"] = registry
+            _LOGGER.info("✓ Entity registry initialized with %d entities", 
+                        len(registry.get_entities()))
+        except Exception as e:
+            _LOGGER.exception("Failed to initialize registry: %s", e)
+            # Registry is not critical, continue without it
+            _LOGGER.warning("Continuing without registry support")
+            hass.data[DOMAIN]["registry"] = None
+        
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # STEP 3: Initialize Evaluator (Learning Engine)
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        _LOGGER.debug("Initializing evaluator engine...")
+        
+        from .evaluator import LSGEvaluator
+        
+        try:
+            evaluator = LSGEvaluator(hass)
+            await evaluator.async_setup()
+            hass.data[DOMAIN]["evaluator"] = evaluator
+            _LOGGER.info("✓ Evaluator engine initialized")
+        except Exception as e:
+            _LOGGER.exception("Failed to initialize evaluator: %s", e)
+            raise ConfigEntryNotReady(f"Evaluator initialization failed: {e}") from e
+        
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # STEP 4: Register WebSocket API
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        _LOGGER.debug("Registering WebSocket API...")
+        
+        try:
+            from .websocket_api import async_setup_websocket
+            
+            async_setup_websocket(hass)
+            _LOGGER.info("✓ WebSocket API registered")
+        except Exception as e:
+            _LOGGER.exception("Failed to register WebSocket API: %s", e)
+            # WebSocket is critical for panel functionality
+            raise ConfigEntryNotReady(f"WebSocket API registration failed: {e}") from e
+        
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # STEP 5: Register Frontend Panel
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        _LOGGER.debug("Registering frontend panel...")
+        
+        try:
+            from .panel import async_register_panel
+            
+            await async_register_panel(hass)
+            _LOGGER.info("✓ Frontend panel registered")
+        except Exception as e:
+            _LOGGER.exception("Failed to register panel: %s", e)
+            # Panel registration failure is not critical
+            _LOGGER.warning("Panel not available, but core functionality will work")
+        
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # STEP 6: Setup Periodic Evaluation Loop
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        _LOGGER.debug("Setting up periodic evaluation...")
+        
+        # Get check interval from configuration
+        check_interval = await _async_get_check_interval(hass, storage)
+        
+        async def _periodic_evaluation(now=None) -> None:
+            """Execute periodic evaluation of all entities."""
+            try:
+                evaluator_instance = hass.data[DOMAIN].get("evaluator")
+                if evaluator_instance:
+                    _LOGGER.debug("Running periodic evaluation...")
+                    results = await evaluator_instance.async_run_evaluation()
+                    _LOGGER.debug("Evaluation completed: %d entities processed", 
+                                len(results))
+                else:
+                    _LOGGER.warning("Evaluator not available for periodic run")
+            except Exception as e:
+                _LOGGER.exception("Error during periodic evaluation: %s", e)
+        
+        # Run initial evaluation
+        hass.async_create_task(_periodic_evaluation())
+        
+        # Schedule periodic evaluations
+        unsub = async_track_time_interval(
+            hass,
+            _periodic_evaluation,
+            timedelta(minutes=check_interval)
+        )
+        hass.data[DOMAIN]["_unsub_eval"] = unsub
+        
+        _LOGGER.info("✓ Periodic evaluation scheduled (every %d minutes)", 
+                    check_interval)
+        
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # STEP 7: Mark as Ready
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        hass.data[DOMAIN]["_ready"] = True
+        _LOGGER.info("═══════════════════════════════════════════════")
+        _LOGGER.info("✓ Last Seen Guardian fully initialized")
+        _LOGGER.info("═══════════════════════════════════════════════")
+        
+        return True
+        
+    except ConfigEntryNotReady:
+        # Re-raise to let HA retry initialization
+        raise
+        
+    except Exception as e:
+        _LOGGER.exception("Unexpected error during setup: %s", e)
+        # Cleanup partial initialization
+        await _async_cleanup(hass)
+        return False
 
-    hass.async_create_task(_run_eval())
-
-    unsub = async_track_time_interval(hass, _run_eval, timedelta(minutes=every_min))
-    hass.data[DOMAIN]["_unsub_eval"] = unsub
-
-    _LOGGER.info("Last Seen Guardian: evaluator loop cada %s minutos", every_min)
-    return True
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    # Cancelar loop
-    unsub = hass.data.get(DOMAIN, {}).get("_unsub_eval")
-    if unsub:
-        try:
-            unsub()
-        except Exception:
-            _LOGGER.exception("Error cancelando evaluator loop")
+    """Unload a config entry."""
+    _LOGGER.info("Unloading Last Seen Guardian integration")
+    
+    try:
+        await _async_cleanup(hass)
+        
+        # Clear domain data
+        if DOMAIN in hass.data:
+            hass.data.pop(DOMAIN)
+        
+        _LOGGER.info("✓ Last Seen Guardian unloaded successfully")
+        return True
+        
+    except Exception as e:
+        _LOGGER.exception("Error during unload: %s", e)
+        return False
 
-    # Limpieza
-    hass.data.get(DOMAIN, {}).pop("_unsub_eval", None)
-    hass.data.get(DOMAIN, {}).pop("storage", None)
-    return True
+
+async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload config entry."""
+    _LOGGER.info("Reloading Last Seen Guardian integration")
+    await async_unload_entry(hass, entry)
+    await async_setup_entry(hass, entry)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# PRIVATE HELPER FUNCTIONS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+async def _async_get_check_interval(
+    hass: HomeAssistant, 
+    storage: "LSGStorage"
+) -> int:
+    """Get check interval from configuration or use default."""
+    try:
+        config = await storage.async_get("config")
+        interval = config.get("global", {}).get("check_every_minutes")
+        
+        if interval is not None:
+            interval = int(interval)
+            if interval < 1:
+                _LOGGER.warning(
+                    "Invalid check interval %d, using default %d",
+                    interval,
+                    DEFAULT_CHECK_INTERVAL
+                )
+                return DEFAULT_CHECK_INTERVAL
+            return interval
+            
+    except Exception as e:
+        _LOGGER.warning(
+            "Could not read check_every_minutes from config: %s. Using default %d",
+            e,
+            DEFAULT_CHECK_INTERVAL
+        )
+    
+    return DEFAULT_CHECK_INTERVAL
+
+
+async def _async_cleanup(hass: HomeAssistant) -> None:
+    """Cleanup all resources."""
+    _LOGGER.debug("Starting cleanup...")
+    
+    domain_data = hass.data.get(DOMAIN, {})
+    
+    # 1. Cancel periodic evaluation
+    unsub_eval = domain_data.get("_unsub_eval")
+    if unsub_eval:
+        try:
+            unsub_eval()
+            _LOGGER.debug("✓ Periodic evaluation cancelled")
+        except Exception as e:
+            _LOGGER.exception("Error cancelling evaluation loop: %s", e)
+    
+    # 2. Unload evaluator
+    evaluator = domain_data.get("evaluator")
+    if evaluator:
+        try:
+            if hasattr(evaluator, "async_unload"):
+                await evaluator.async_unload()
+            _LOGGER.debug("✓ Evaluator unloaded")
+        except Exception as e:
+            _LOGGER.exception("Error unloading evaluator: %s", e)
+    
+    # 3. Unload registry
+    registry = domain_data.get("registry")
+    if registry:
+        try:
+            if hasattr(registry, "async_unload"):
+                await registry.async_unload()
+            _LOGGER.debug("✓ Registry unloaded")
+        except Exception as e:
+            _LOGGER.exception("Error unloading registry: %s", e)
+    
+    # 4. Save and close storage
+    storage = domain_data.get("storage")
+    if storage:
+        try:
+            if hasattr(storage, "async_save"):
+                await storage.async_save()
+            _LOGGER.debug("✓ Storage saved and closed")
+        except Exception as e:
+            _LOGGER.exception("Error saving storage: %s", e)
+    
+    # 5. Clear references
+    domain_data.clear()
+    
+    _LOGGER.debug("Cleanup completed")
