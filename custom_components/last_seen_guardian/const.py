@@ -6,9 +6,9 @@ DOMAIN = "last_seen_guardian"
 STORAGE_VERSION = 1
 STORAGE_KEY = f"{DOMAIN}_store"
 
-# Configuration defaults
+# Configuration defaults - SAFE STARTUP VALUES
 DEFAULT_CHECK_INTERVAL = 60  # minutes
-DEFAULT_THRESHOLD_MULTIPLIER = 2.5
+DEFAULT_THRESHOLD_MULTIPLIER = 5.0  # INCREASED for fewer false positives
 
 # Panel configuration
 PANEL_URL_PATH = "last_seen_guardian"
@@ -28,23 +28,23 @@ LSG_TAGS = ["door", "humidity", "soil_moisture", "water_leak"]
 # Operation Modes
 LSG_MODES = ["normal", "vacation", "night"]
 
-# Mode configurations
+# Mode configurations - SAFE DEFAULTS
 MODE_CONFIGS = {
     "normal": {
-        "threshold_multiplier": 2.5,
-        "alert_enabled": True,
+        "threshold_multiplier": 5.0,  # INCREASED FROM 2.5
+        "alert_enabled": False,  # DISABLED BY DEFAULT
         "ignore_variable": False,
         "silent_alerts": False,
     },
     "vacation": {
-        "threshold_multiplier": 4.0,
+        "threshold_multiplier": 8.0,  # INCREASED FROM 4.0
         "alert_enabled": False,
         "ignore_variable": True,
         "silent_alerts": False,
     },
     "night": {
-        "threshold_multiplier": 2.0,
-        "alert_enabled": True,
+        "threshold_multiplier": 4.0,  # INCREASED FROM 2.0
+        "alert_enabled": False,  # DISABLED BY DEFAULT
         "ignore_variable": False,
         "silent_alerts": True,
     },
@@ -57,30 +57,35 @@ PLATFORMS = ["sensor"]
 RATE_LIMIT_WINDOW = 60  # seconds
 RATE_LIMIT_MAX_CALLS = 30  # max calls per window
 
-# Data validation (v0.6)
-MAX_LEARNING_STATE_SIZE = 10000  # max entities to track
-MAX_HISTORY_PER_ENTITY = 100  # max events per entity
-MAX_HISTORY_AGE_DAYS = 90  # max age of history events
+# Data validation (v0.6) - SAFE LIMITS
+MAX_LEARNING_STATE_SIZE = 1000  # REDUCED FROM 10000
+MAX_HISTORY_PER_ENTITY = 50  # REDUCED FROM 100
+MAX_HISTORY_AGE_DAYS = 30  # REDUCED FROM 90
 
-# Notifications (v0.6)
+# Startup protection - CRITICAL
+STARTUP_GRACE_PERIOD_SECONDS = 600  # 10 minutes
+MAX_ENTITIES_PER_EVALUATION = 500  # Process max 500 per cycle
+MIN_EVENTS_FOR_NOTIFICATION = 20  # INCREASED FROM 10
+
+# Notifications (v0.6) - SAFE DELAYS
 DEFAULT_NOTIFY_SERVICE = "notify.notify"
-NOTIFICATION_THROTTLE_SECONDS = 3600  # 5 minutes between same alert
-NOTIFICATION_COOLDOWN_SECONDS = 60  # 1 minute between different alerts
+NOTIFICATION_THROTTLE_SECONDS = 7200  # 2 hours - INCREASED
+NOTIFICATION_COOLDOWN_SECONDS = 300  # 5 minutes - INCREASED
 
 # Battery monitoring (v0.7)
-BATTERY_LOW_THRESHOLD = 20  # percent
-BATTERY_CRITICAL_THRESHOLD = 10  # percent
-BATTERY_DOMAINS = ["sensor"]  # domains that may have battery attribute
+BATTERY_LOW_THRESHOLD = 15  # percent - REDUCED to alert only critical
+BATTERY_CRITICAL_THRESHOLD = 5  # percent
+BATTERY_DOMAINS = ["sensor"]
 
 # Signal quality (v0.7)
-LQI_DOMAINS = ["sensor", "binary_sensor"]  # domains that may have lqi
-LQI_LOW_THRESHOLD = 100  # Zigbee LQI threshold
-RSSI_LOW_THRESHOLD = -80  # WiFi/BLE RSSI threshold (dBm)
+LQI_DOMAINS = ["sensor", "binary_sensor"]
+LQI_LOW_THRESHOLD = 50  # REDUCED - only alert very poor signal
+RSSI_LOW_THRESHOLD = -90  # REDUCED - only alert very poor signal
 
 # History & Analytics (v0.8)
-HISTORY_RETENTION_DAYS = 30  # days to keep detailed history
-HISTORY_COMPRESSION_ENABLED = True  # compress old history data
-TREND_ANALYSIS_MIN_EVENTS = 20  # minimum events for trend analysis
+HISTORY_RETENTION_DAYS = 30
+HISTORY_COMPRESSION_ENABLED = True
+TREND_ANALYSIS_MIN_EVENTS = 20
 
 # Device info
 DEVICE_MANUFACTURER = "Last Seen Guardian"
