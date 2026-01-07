@@ -16,7 +16,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.exceptions import ConfigEntryNotReady
 
-from .const import DOMAIN, DEFAULT_CHECK_INTERVAL
+from .const import DOMAIN, DEFAULT_CHECK_INTERVAL, PLATFORMS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -157,7 +157,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     check_interval)
         
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # STEP 7: Mark as Ready
+        # STEP 7: Setup Platforms (Sensors)
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        _LOGGER.debug("Setting up platforms...")
+        
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        _LOGGER.info("✓ Platforms setup complete")
+        
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # STEP 8: Mark as Ready
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         hass.data[DOMAIN]["_ready"] = True
         _LOGGER.info("═══════════════════════════════════════════════")
@@ -182,14 +190,19 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.info("Unloading Last Seen Guardian integration")
     
     try:
-        await _async_cleanup(hass)
+        # Unload platforms first
+        unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
         
-        # Clear domain data
-        if DOMAIN in hass.data:
-            hass.data.pop(DOMAIN)
+        if unload_ok:
+            await _async_cleanup(hass)
+            
+            # Clear domain data
+            if DOMAIN in hass.data:
+                hass.data.pop(DOMAIN)
+            
+            _LOGGER.info("✓ Last Seen Guardian unloaded successfully")
         
-        _LOGGER.info("✓ Last Seen Guardian unloaded successfully")
-        return True
+        return unload_ok
         
     except Exception as e:
         _LOGGER.exception("Error during unload: %s", e)

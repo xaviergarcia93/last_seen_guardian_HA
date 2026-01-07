@@ -1,13 +1,12 @@
 {
-    "domain": "last_seen_guardian",
-    "name": "Last Seen Guardian",
-    "version": "0.5.0",
-    "documentation": "https://github.com/xaviergarcia93/last_seen_guardian",
-    "requirements": [],
-    "config_flow": true,
-    "codeowners": ["@xaviergarcia93"],
-    "iot_class": "local_push",
-    "dependencies": [],
-    "integration_type": "device",
-    "panel_iframe": false
+  "domain": "last_seen_guardian",
+  "name": "Last Seen Guardian",
+  "codeowners": ["@xaviergarcia93"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/xaviergarcia93/ha_lsg",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/xaviergarcia93/ha_lsg/issues",
+  "requirements": [],
+  "version": "0.5.2"
 }
