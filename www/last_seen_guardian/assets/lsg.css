@@ -1,13 +1,377 @@
-.lsg-panel { font-family: Arial, sans-serif; }
-.lsg-tabs { margin-bottom: 1em; }
-.lsg-tab { padding: 0.5em 1em; margin-right: 0.5em; }
-.lsg-tab-active { background: #16b3fa; color: #fff; border-radius: 3px; }
-.lsg-health-ok { color: green; }
-.lsg-health-late { color: orange; }
-.lsg-health-stale { color: red; }
-.lsg-sensors-tab table { width: 100%; }
 /* ============================================
-   MODES TAB STYLES
+   LAST SEEN GUARDIAN - COMPLETE STYLES
+   Version: 0.8.0
+   ============================================ */
+
+/* ============================================
+   VARIABLES
+   ============================================ */
+
+:root {
+    --lsg-primary: var(--primary-color, #03a9f4);
+    --lsg-success: var(--success-color, #4caf50);
+    --lsg-warning: var(--warning-color, #ff9800);
+    --lsg-error: var(--error-color, #f44336);
+    --lsg-info: var(--info-color, #2196f3);
+    --lsg-bg: var(--card-background-color, #fff);
+    --lsg-text: var(--primary-text-color, #212121);
+    --lsg-text-secondary: var(--secondary-text-color, #727272);
+    --lsg-divider: var(--divider-color, #e0e0e0);
+    --lsg-border-radius: 12px;
+    --lsg-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    --lsg-shadow-hover: 0 4px 16px rgba(0, 0, 0, 0.15);
+    --lsg-transition: all 0.3s ease;
+}
+
+/* ============================================
+   GLOBAL PANEL STYLES
+   ============================================ */
+
+.lsg-panel {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    background: var(--primary-background-color);
+    overflow: hidden;
+}
+
+.lsg-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 24px 32px;
+    background: var(--lsg-bg);
+    border-bottom: 2px solid var(--lsg-divider);
+    box-shadow: var(--lsg-shadow);
+}
+
+.lsg-header h1 {
+    margin: 0;
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--lsg-text);
+}
+
+.lsg-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.lsg-last-refresh {
+    font-size: 13px;
+    color: var(--lsg-text-secondary);
+}
+
+.lsg-refresh-btn {
+    background: var(--lsg-primary);
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: var(--lsg-transition);
+}
+
+.lsg-refresh-btn:hover {
+    transform: scale(1.1) rotate(90deg);
+}
+
+.lsg-refresh-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* ============================================
+   TABS NAVIGATION
+   ============================================ */
+
+.lsg-tabs {
+    display: flex;
+    gap: 8px;
+    padding: 16px 32px;
+    background: var(--lsg-bg);
+    border-bottom: 1px solid var(--lsg-divider);
+    overflow-x: auto;
+}
+
+.lsg-tab {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 24px;
+    background: transparent;
+    border: 2px solid transparent;
+    border-radius: var(--lsg-border-radius);
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--lsg-text-secondary);
+    cursor: pointer;
+    transition: var(--lsg-transition);
+    white-space: nowrap;
+}
+
+.lsg-tab:hover {
+    background: rgba(var(--rgb-primary-color), 0.1);
+    color: var(--lsg-primary);
+}
+
+.lsg-tab-active {
+    background: var(--lsg-primary);
+    color: white;
+    border-color: var(--lsg-primary);
+}
+
+.lsg-tab ha-icon {
+    font-size: 20px;
+}
+
+/* ============================================
+   CONTENT AREA
+   ============================================ */
+
+.lsg-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px 32px;
+}
+
+.lsg-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 16px;
+}
+
+.lsg-error {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 16px;
+    color: var(--lsg-error);
+}
+
+.lsg-error ha-icon {
+    font-size: 48px;
+}
+
+.lsg-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 64px 32px;
+    text-align: center;
+    color: var(--lsg-text-secondary);
+}
+
+.lsg-empty-state ha-icon {
+    font-size: 64px;
+    margin-bottom: 16px;
+    opacity: 0.5;
+}
+
+/* ============================================
+   SENSORS TAB
+   ============================================ */
+
+.lsg-sensors-tab {
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+.lsg-stats-bar {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 32px;
+}
+
+.lsg-stat {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 20px;
+    background: var(--lsg-bg);
+    border-radius: var(--lsg-border-radius);
+    border-left: 4px solid;
+    box-shadow: var(--lsg-shadow);
+}
+
+.lsg-stat ha-icon {
+    font-size: 28px;
+}
+
+.lsg-stat span {
+    font-weight: 700;
+    font-size: 16px;
+}
+
+.lsg-stat-ok {
+    border-color: var(--lsg-success);
+}
+
+.lsg-stat-ok ha-icon {
+    color: var(--lsg-success);
+}
+
+.lsg-stat-late {
+    border-color: var(--lsg-warning);
+}
+
+.lsg-stat-late ha-icon {
+    color: var(--lsg-warning);
+}
+
+.lsg-stat-stale {
+    border-color: var(--lsg-error);
+}
+
+.lsg-stat-stale ha-icon {
+    color: var(--lsg-error);
+}
+
+.lsg-stat-unknown {
+    border-color: var(--lsg-text-secondary);
+}
+
+.lsg-stat-unknown ha-icon {
+    color: var(--lsg-text-secondary);
+}
+
+.lsg-entities-table {
+    width: 100%;
+    background: var(--lsg-bg);
+    border-radius: var(--lsg-border-radius);
+    box-shadow: var(--lsg-shadow);
+    border-collapse: collapse;
+    overflow: hidden;
+}
+
+.lsg-entities-table thead {
+    background: rgba(var(--rgb-primary-color), 0.1);
+}
+
+.lsg-entities-table th {
+    padding: 16px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--lsg-text);
+    border-bottom: 2px solid var(--lsg-divider);
+}
+
+.lsg-entities-table tbody tr {
+    border-bottom: 1px solid var(--lsg-divider);
+    transition: var(--lsg-transition);
+}
+
+.lsg-entities-table tbody tr:hover {
+    background: rgba(var(--rgb-primary-color), 0.05);
+    cursor: pointer;
+}
+
+.lsg-entities-table td {
+    padding: 14px 16px;
+    font-size: 14px;
+}
+
+.lsg-entity-id code {
+    background: rgba(var(--rgb-primary-color), 0.1);
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-family: monospace;
+}
+
+.lsg-domain-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    background: rgba(var(--rgb-primary-color), 0.2);
+    color: var(--lsg-primary);
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.lsg-no-area {
+    color: var(--lsg-text-secondary);
+    font-style: italic;
+}
+
+.lsg-health-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 16px;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.lsg-health-ok {
+    background: var(--lsg-success);
+    color: white;
+}
+
+.lsg-health-late {
+    background: var(--lsg-warning);
+    color: white;
+}
+
+.lsg-health-stale {
+    background: var(--lsg-error);
+    color: white;
+}
+
+.lsg-health-unknown {
+    background: var(--lsg-text-secondary);
+    color: white;
+}
+
+.lsg-timestamp,
+.lsg-interval {
+    color: var(--lsg-text-secondary);
+    font-size: 13px;
+}
+
+.lsg-no-data {
+    color: var(--lsg-text-secondary);
+    font-style: italic;
+}
+
+.lsg-btn-details {
+    background: transparent;
+    border: 2px solid var(--lsg-primary);
+    color: var(--lsg-primary);
+    border-radius: 50%;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: var(--lsg-transition);
+}
+
+.lsg-btn-details:hover {
+    background: var(--lsg-primary);
+    color: white;
+    transform: scale(1.1);
+}
+
+/* ============================================
+   MODES TAB
    ============================================ */
 
 .lsg-modes-tab {
@@ -27,7 +391,7 @@
 }
 
 .lsg-subtitle {
-    color: var(--secondary-text-color);
+    color: var(--lsg-text-secondary);
     margin: 0;
 }
 
@@ -36,11 +400,11 @@
     align-items: center;
     gap: 16px;
     padding: 16px 20px;
-    background: var(--primary-color);
+    background: var(--lsg-primary);
     color: white;
-    border-radius: 8px;
+    border-radius: var(--lsg-border-radius);
     margin-bottom: 32px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    box-shadow: var(--lsg-shadow);
 }
 
 .lsg-current-mode-banner ha-icon {
@@ -69,25 +433,25 @@
 
 .lsg-mode-card {
     position: relative;
-    background: var(--card-background-color);
-    border: 2px solid var(--divider-color);
-    border-radius: 12px;
+    background: var(--lsg-bg);
+    border: 2px solid var(--lsg-divider);
+    border-radius: var(--lsg-border-radius);
     padding: 24px;
-    transition: all 0.3s ease;
+    transition: var(--lsg-transition);
     cursor: pointer;
 }
 
 .lsg-mode-card:hover {
-    border-color: var(--primary-color);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-    transform: translateY(-2px);
+    border-color: var(--lsg-primary);
+    box-shadow: var(--lsg-shadow-hover);
+    transform: translateY(-4px);
 }
 
 .lsg-mode-active {
-    border-color: var(--primary-color);
-    background: var(--primary-color);
+    border-color: var(--lsg-primary);
+    background: var(--lsg-primary);
     color: white;
-    box-shadow: 0 4px 12px rgba(var(--rgb-primary-color), 0.3);
+    box-shadow: var(--lsg-shadow-hover);
 }
 
 .lsg-mode-icon {
@@ -136,7 +500,7 @@
     align-items: center;
     gap: 6px;
     padding: 6px 12px;
-    background: rgba(255,255,255,0.2);
+    background: rgba(255, 255, 255, 0.2);
     border-radius: 20px;
     font-size: 13px;
     font-weight: 600;
@@ -146,18 +510,17 @@
     margin-top: 16px;
     width: 100%;
     padding: 12px;
-    background: var(--primary-color);
+    background: var(--lsg-primary);
     color: white;
     border: none;
-    border-radius: 8px;
+    border-radius: var(--lsg-border-radius);
     font-size: 15px;
     font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: var(--lsg-transition);
 }
 
 .lsg-btn-activate:hover {
-    background: var(--primary-color);
     filter: brightness(1.1);
     transform: scale(1.02);
 }
@@ -172,9 +535,10 @@
 }
 
 .lsg-advanced-settings details {
-    background: var(--card-background-color);
-    border-radius: 8px;
+    background: var(--lsg-bg);
+    border-radius: var(--lsg-border-radius);
     padding: 16px;
+    box-shadow: var(--lsg-shadow);
 }
 
 .lsg-advanced-settings summary {
@@ -194,7 +558,7 @@
 .lsg-advanced-content {
     margin-top: 16px;
     padding-top: 16px;
-    border-top: 1px solid var(--divider-color);
+    border-top: 1px solid var(--lsg-divider);
 }
 
 .lsg-hint {
@@ -202,14 +566,27 @@
     align-items: flex-start;
     gap: 12px;
     padding: 12px;
-    background: var(--info-color);
+    background: var(--lsg-info);
     color: white;
     border-radius: 6px;
     margin-bottom: 16px;
 }
 
+.lsg-form-group label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.lsg-form-group input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+}
+
 /* ============================================
-   GENERAL TAB STYLES
+   GENERAL TAB
    ============================================ */
 
 .lsg-general-tab {
@@ -229,10 +606,11 @@
 }
 
 .lsg-config-section {
-    background: var(--card-background-color);
-    border-radius: 12px;
+    background: var(--lsg-bg);
+    border-radius: var(--lsg-border-radius);
     padding: 24px;
-    border: 1px solid var(--divider-color);
+    border: 1px solid var(--lsg-divider);
+    box-shadow: var(--lsg-shadow);
 }
 
 .lsg-config-section h3 {
@@ -245,7 +623,7 @@
 }
 
 .lsg-config-section h3 ha-icon {
-    color: var(--primary-color);
+    color: var(--lsg-primary);
     font-size: 24px;
 }
 
@@ -268,7 +646,7 @@
     display: block;
     font-weight: normal;
     font-size: 13px;
-    color: var(--secondary-text-color);
+    color: var(--lsg-text-secondary);
     margin-top: 4px;
 }
 
@@ -282,22 +660,22 @@
 .lsg-form-group input[type="text"] {
     flex: 1;
     padding: 10px 14px;
-    border: 2px solid var(--divider-color);
+    border: 2px solid var(--lsg-divider);
     border-radius: 6px;
     font-size: 15px;
-    background: var(--card-background-color);
-    color: var(--primary-text-color);
+    background: var(--lsg-bg);
+    color: var(--lsg-text);
     transition: border-color 0.2s;
 }
 
 .lsg-form-group input:focus {
     outline: none;
-    border-color: var(--primary-color);
+    border-color: var(--lsg-primary);
 }
 
 .lsg-unit {
     font-weight: 600;
-    color: var(--secondary-text-color);
+    color: var(--lsg-text-secondary);
     white-space: nowrap;
 }
 
@@ -307,20 +685,13 @@
     gap: 8px;
     margin-top: 8px;
     font-size: 13px;
-    color: var(--secondary-text-color);
+    color: var(--lsg-text-secondary);
     line-height: 1.5;
 }
 
 .lsg-help-text ha-icon {
     flex-shrink: 0;
     margin-top: 2px;
-}
-
-.lsg-form-group input[type="checkbox"] {
-    width: 20px;
-    height: 20px;
-    margin-right: 10px;
-    cursor: pointer;
 }
 
 .lsg-badge {
@@ -333,7 +704,7 @@
 }
 
 .lsg-badge-success {
-    background: var(--success-color);
+    background: var(--lsg-success);
     color: white;
 }
 
@@ -343,13 +714,13 @@
     gap: 16px;
     padding: 16px;
     background: rgba(var(--rgb-primary-color), 0.1);
-    border-radius: 8px;
-    border-left: 4px solid var(--primary-color);
+    border-radius: var(--lsg-border-radius);
+    border-left: 4px solid var(--lsg-primary);
 }
 
 .lsg-info-box ha-icon {
     font-size: 32px;
-    color: var(--primary-color);
+    color: var(--lsg-primary);
     flex-shrink: 0;
 }
 
@@ -361,7 +732,7 @@
 .lsg-info-box p {
     margin: 0;
     font-size: 14px;
-    color: var(--secondary-text-color);
+    color: var(--lsg-text-secondary);
 }
 
 .lsg-form-actions {
@@ -381,34 +752,36 @@
     gap: 8px;
     padding: 12px 24px;
     border: none;
-    border-radius: 8px;
+    border-radius: var(--lsg-border-radius);
     font-size: 15px;
     font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: var(--lsg-transition);
 }
 
 .lsg-btn-primary {
-    background: var(--primary-color);
+    background: var(--lsg-primary);
     color: white;
 }
 
 .lsg-btn-primary:hover:not(:disabled) {
     filter: brightness(1.1);
+    transform: scale(1.02);
 }
 
 .lsg-btn-secondary {
-    background: var(--card-background-color);
-    color: var(--primary-text-color);
-    border: 2px solid var(--divider-color);
+    background: var(--lsg-bg);
+    color: var(--lsg-text);
+    border: 2px solid var(--lsg-divider);
 }
 
 .lsg-btn-secondary:hover:not(:disabled) {
-    border-color: var(--primary-color);
+    border-color: var(--lsg-primary);
+    color: var(--lsg-primary);
 }
 
 .lsg-btn-danger {
-    background: var(--error-color);
+    background: var(--lsg-error);
     color: white;
 }
 
@@ -422,7 +795,7 @@
 }
 
 /* ============================================
-   DEVICE MODAL STYLES
+   DEVICE MODAL
    ============================================ */
 
 .lsg-modal-overlay {
@@ -449,7 +822,7 @@
 }
 
 .lsg-modal {
-    background: var(--card-background-color);
+    background: var(--lsg-bg);
     border-radius: 16px;
     max-width: 800px;
     width: 90%;
@@ -470,7 +843,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 24px;
-    border-bottom: 1px solid var(--divider-color);
+    border-bottom: 1px solid var(--lsg-divider);
 }
 
 .lsg-modal-title {
@@ -481,7 +854,7 @@
 
 .lsg-modal-title ha-icon {
     font-size: 36px;
-    color: var(--primary-color);
+    color: var(--lsg-primary);
 }
 
 .lsg-modal-title h2 {
@@ -491,7 +864,7 @@
 
 .lsg-modal-title code {
     font-size: 13px;
-    color: var(--secondary-text-color);
+    color: var(--lsg-text-secondary);
 }
 
 .lsg-modal-close {
@@ -499,12 +872,12 @@
     border: none;
     padding: 8px;
     cursor: pointer;
-    color: var(--secondary-text-color);
+    color: var(--lsg-text-secondary);
     transition: color 0.2s;
 }
 
 .lsg-modal-close:hover {
-    color: var(--primary-text-color);
+    color: var(--lsg-text);
 }
 
 .lsg-modal-body {
@@ -545,30 +918,10 @@
     font-weight: 700;
 }
 
-.lsg-health-ok {
-    background: var(--success-color);
-    color: white;
-}
-
-.lsg-health-late {
-    background: var(--warning-color);
-    color: white;
-}
-
-.lsg-health-stale {
-    background: var(--error-color);
-    color: white;
-}
-
-.lsg-health-unknown {
-    background: var(--disabled-color);
-    color: white;
-}
-
 .lsg-diagnostic-message {
     margin-top: 16px;
     font-size: 15px;
-    color: var(--secondary-text-color);
+    color: var(--lsg-text-secondary);
 }
 
 .lsg-metadata-grid {
@@ -589,7 +942,7 @@
 
 .lsg-metadata-label {
     font-size: 13px;
-    color: var(--secondary-text-color);
+    color: var(--lsg-text-secondary);
     font-weight: 500;
 }
 
@@ -601,7 +954,7 @@
 .lsg-label-badge {
     display: inline-block;
     padding: 4px 12px;
-    background: var(--primary-color);
+    background: var(--lsg-primary);
     color: white;
     border-radius: 12px;
     font-size: 12px;
@@ -625,14 +978,14 @@
 
 .lsg-stat-card ha-icon {
     font-size: 28px;
-    color: var(--primary-color);
+    color: var(--lsg-primary);
     flex-shrink: 0;
 }
 
 .lsg-stat-label {
     display: block;
     font-size: 12px;
-    color: var(--secondary-text-color);
+    color: var(--lsg-text-secondary);
     margin-bottom: 4px;
 }
 
@@ -658,18 +1011,18 @@
 }
 
 .lsg-diagnostic-error {
-    background: rgba(var(--rgb-error-color), 0.1);
-    border-color: var(--error-color);
+    background: rgba(244, 67, 54, 0.1);
+    border-color: var(--lsg-error);
 }
 
 .lsg-diagnostic-warning {
-    background: rgba(var(--rgb-warning-color), 0.1);
-    border-color: var(--warning-color);
+    background: rgba(255, 152, 0, 0.1);
+    border-color: var(--lsg-warning);
 }
 
 .lsg-diagnostic-info {
-    background: rgba(var(--rgb-info-color), 0.1);
-    border-color: var(--info-color);
+    background: rgba(33, 150, 243, 0.1);
+    border-color: var(--lsg-info);
 }
 
 .lsg-diagnostic-item ha-icon {
@@ -679,15 +1032,15 @@
 }
 
 .lsg-diagnostic-error ha-icon {
-    color: var(--error-color);
+    color: var(--lsg-error);
 }
 
 .lsg-diagnostic-warning ha-icon {
-    color: var(--warning-color);
+    color: var(--lsg-warning);
 }
 
 .lsg-diagnostic-info ha-icon {
-    color: var(--info-color);
+    color: var(--lsg-info);
 }
 
 .lsg-diagnostic-item strong {
@@ -699,7 +1052,7 @@
 .lsg-diagnostic-item p {
     margin: 0;
     font-size: 14px;
-    color: var(--secondary-text-color);
+    color: var(--lsg-text-secondary);
     line-height: 1.5;
 }
 
@@ -718,14 +1071,14 @@
 
 .lsg-history-time {
     font-size: 13px;
-    color: var(--secondary-text-color);
+    color: var(--lsg-text-secondary);
     text-align: right;
 }
 
 .lsg-history-dot {
     width: 12px;
     height: 12px;
-    background: var(--primary-color);
+    background: var(--lsg-primary);
     border-radius: 50%;
     position: relative;
 }
@@ -737,7 +1090,7 @@
     left: 50%;
     width: 20px;
     height: 20px;
-    border: 2px solid var(--primary-color);
+    border: 2px solid var(--lsg-primary);
     border-radius: 50%;
     transform: translate(-50%, -50%);
     opacity: 0.3;
@@ -755,7 +1108,7 @@
 
 .lsg-history-interval {
     font-size: 13px;
-    color: var(--secondary-text-color);
+    color: var(--lsg-text-secondary);
 }
 
 .lsg-modal-footer {
@@ -763,5 +1116,152 @@
     justify-content: flex-end;
     gap: 12px;
     padding: 20px 24px;
-    border-top: 1px solid var(--divider-color);
+    border-top: 1px solid var(--lsg-divider);
+}
+
+/* ============================================
+   TECHNICAL CONTEXT DISPLAY (v0.7)
+   ============================================ */
+
+.lsg-technical-context {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+}
+
+.lsg-context-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px;
+    background: var(--lsg-bg);
+    border: 2px solid var(--lsg-divider);
+    border-radius: var(--lsg-border-radius);
+}
+
+.lsg-context-card.lsg-context-warning {
+    border-color: var(--lsg-warning);
+    background: rgba(255, 152, 0, 0.05);
+}
+
+.lsg-context-card.lsg-context-error {
+    border-color: var(--lsg-error);
+    background: rgba(244, 67, 54, 0.05);
+}
+
+.lsg-context-icon {
+    font-size: 24px;
+    color: var(--lsg-primary);
+}
+
+.lsg-context-warning .lsg-context-icon {
+    color: var(--lsg-warning);
+}
+
+.lsg-context-error .lsg-context-icon {
+    color: var(--lsg-error);
+}
+
+.lsg-context-label {
+    font-size: 12px;
+    color: var(--lsg-text-secondary);
+    display: block;
+}
+
+.lsg-context-value {
+    font-size: 16px;
+    font-weight: 700;
+    display: block;
+}
+
+/* ============================================
+   RESPONSIVE DESIGN
+   ============================================ */
+
+@media (max-width: 768px) {
+    .lsg-header {
+        padding: 16px 20px;
+    }
+    
+    .lsg-header h1 {
+        font-size: 22px;
+    }
+    
+    .lsg-tabs {
+        padding: 12px 20px;
+    }
+    
+    .lsg-content {
+        padding: 16px 20px;
+    }
+    
+    .lsg-modes-grid,
+    .lsg-stats-bar {
+        grid-template-columns: 1fr;
+    }
+    
+    .lsg-modal {
+        width: 95%;
+        max-height: 95vh;
+    }
+    
+    .lsg-modal-body {
+        padding: 16px;
+    }
+    
+    .lsg-metadata-grid,
+    .lsg-stats-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .lsg-history-item {
+        grid-template-columns: 90px 16px 1fr;
+    }
+}
+
+/* ============================================
+   DARK MODE SUPPORT
+   ============================================ */
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --lsg-bg: var(--card-background-color, #1e1e1e);
+        --lsg-text: var(--primary-text-color, #e1e1e1);
+        --lsg-text-secondary: var(--secondary-text-color, #9e9e9e);
+        --lsg-divider: var(--divider-color, #373737);
+    }
+}
+
+/* ============================================
+   ANIMATIONS
+   ============================================ */
+
+@keyframes lsg-fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.lsg-sensors-tab,
+.lsg-modes-tab,
+.lsg-general-tab {
+    animation: lsg-fadeIn 0.3s ease;
+}
+
+@keyframes lsg-pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
+}
+
+.lsg-loading ha-circular-progress {
+    animation: lsg-pulse 2s infinite;
 }

@@ -19,9 +19,19 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.device_registry import DeviceInfo
 from datetime import timedelta
 
-from .const import DOMAIN, HEALTH_STALE, HEALTH_LATE, HEALTH_OK, HEALTH_UNKNOWN
+from .const import (
+    DOMAIN,
+    HEALTH_STALE,
+    HEALTH_LATE,
+    HEALTH_OK,
+    HEALTH_UNKNOWN,
+    DEVICE_MANUFACTURER,
+    DEVICE_MODEL,
+    DEVICE_SW_VERSION,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,31 +52,56 @@ async def async_setup_entry(
     
     # Create sensor entities
     entities = [
-        LSGAnyProblemBinarySensor(hass, evaluator),
-        LSGFailedEntitiesCountSensor(hass, evaluator),
-        LSGHealthySensor(hass, evaluator),
-        LSGLateSensor(hass, evaluator),
-        LSGStaleSensor(hass, evaluator),
-        LSGUnknownSensor(hass, evaluator),
+        LSGAnyProblemBinarySensor(hass, evaluator, entry),
+        LSGFailedEntitiesCountSensor(hass, evaluator, entry),
+        LSGHealthySensor(hass, evaluator, entry),
+        LSGLateSensor(hass, evaluator, entry),
+        LSGStaleSensor(hass, evaluator, entry),
+        LSGUnknownSensor(hass, evaluator, entry),
     ]
     
     async_add_entities(entities)
     _LOGGER.info("LSG sensor platform setup complete: %d entities", len(entities))
 
 
-class LSGAnyProblemBinarySensor(BinarySensorEntity):
-    """Binary sensor indicating if any entity has problems."""
+class LSGBaseSensor:
+    """Base class for LSG sensors with device info."""
     
-    def __init__(self, hass: HomeAssistant, evaluator):
-        """Initialize the sensor."""
+    def __init__(self, hass: HomeAssistant, evaluator, entry: ConfigEntry):
+        """Initialize base sensor."""
         self._hass = hass
         self._evaluator = evaluator
+        self._entry = entry
+        self._unsub_update = None
+    
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device info to group sensors together."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry.entry_id)},
+            name="Last Seen Guardian",
+            manufacturer=DEVICE_MANUFACTURER,
+            model=DEVICE_MODEL,
+            sw_version=DEVICE_SW_VERSION,
+        )
+    
+    async def async_will_remove_from_hass(self) -> None:
+        """Cleanup on removal."""
+        if self._unsub_update:
+            self._unsub_update()
+
+
+class LSGAnyProblemBinarySensor(LSGBaseSensor, BinarySensorEntity):
+    """Binary sensor indicating if any entity has problems."""
+    
+    def __init__(self, hass: HomeAssistant, evaluator, entry: ConfigEntry):
+        """Initialize the sensor."""
+        super().__init__(hass, evaluator, entry)
         self._attr_name = "LSG Any Problem"
         self._attr_unique_id = f"{DOMAIN}_any_problem"
         self._attr_device_class = BinarySensorDeviceClass.PROBLEM
         self._attr_icon = "mdi:alert-circle"
         self._is_on = False
-        self._unsub_update = None
     
     @property
     def is_on(self) -> bool:
@@ -95,37 +130,26 @@ class LSGAnyProblemBinarySensor(BinarySensorEntity):
             self._update_state()
             self.async_write_ha_state()
         
-        # Update every minute
         self._unsub_update = async_track_time_interval(
             self._hass, _update, timedelta(minutes=1)
         )
-        
-        # Initial update
         _update()
-    
-    async def async_will_remove_from_hass(self) -> None:
-        """Cleanup on removal."""
-        if self._unsub_update:
-            self._unsub_update()
     
     def _update_state(self) -> None:
         """Update the sensor state."""
         health_states = self._evaluator.get_all_health_states()
-        
-        # Problem if any entity is stale or late
         self._is_on = any(
             h in (HEALTH_STALE, HEALTH_LATE) 
             for h in health_states.values()
         )
 
 
-class LSGFailedEntitiesCountSensor(SensorEntity):
+class LSGFailedEntitiesCountSensor(LSGBaseSensor, SensorEntity):
     """Sensor showing count of failed (stale) entities."""
     
-    def __init__(self, hass: HomeAssistant, evaluator):
+    def __init__(self, hass: HomeAssistant, evaluator, entry: ConfigEntry):
         """Initialize the sensor."""
-        self._hass = hass
-        self._evaluator = evaluator
+        super().__init__(hass, evaluator, entry)
         self._attr_name = "LSG Failed Entities"
         self._attr_unique_id = f"{DOMAIN}_failed_entities"
         self._attr_icon = "mdi:alert-circle-outline"
@@ -133,7 +157,6 @@ class LSGFailedEntitiesCountSensor(SensorEntity):
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._state = 0
         self._failed_list = []
-        self._unsub_update = None
     
     @property
     def native_value(self) -> int:
@@ -156,18 +179,10 @@ class LSGFailedEntitiesCountSensor(SensorEntity):
             self._update_state()
             self.async_write_ha_state()
         
-        # Update every minute
         self._unsub_update = async_track_time_interval(
             self._hass, _update, timedelta(minutes=1)
         )
-        
-        # Initial update
         _update()
-    
-    async def async_will_remove_from_hass(self) -> None:
-        """Cleanup on removal."""
-        if self._unsub_update:
-            self._unsub_update()
     
     def _update_state(self) -> None:
         """Update the sensor state."""
@@ -181,20 +196,18 @@ class LSGFailedEntitiesCountSensor(SensorEntity):
         self._state = len(self._failed_list)
 
 
-class LSGHealthySensor(SensorEntity):
+class LSGHealthySensor(LSGBaseSensor, SensorEntity):
     """Sensor showing count of healthy entities."""
     
-    def __init__(self, hass: HomeAssistant, evaluator):
+    def __init__(self, hass: HomeAssistant, evaluator, entry: ConfigEntry):
         """Initialize the sensor."""
-        self._hass = hass
-        self._evaluator = evaluator
+        super().__init__(hass, evaluator, entry)
         self._attr_name = "LSG Healthy Entities"
         self._attr_unique_id = f"{DOMAIN}_healthy_entities"
         self._attr_icon = "mdi:check-circle-outline"
         self._attr_native_unit_of_measurement = "entities"
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._state = 0
-        self._unsub_update = None
     
     @property
     def native_value(self) -> int:
@@ -212,11 +225,6 @@ class LSGHealthySensor(SensorEntity):
             self._hass, _update, timedelta(minutes=1)
         )
         _update()
-    
-    async def async_will_remove_from_hass(self) -> None:
-        """Cleanup on removal."""
-        if self._unsub_update:
-            self._unsub_update()
     
     def _update_state(self) -> None:
         """Update the sensor state."""
@@ -224,20 +232,18 @@ class LSGHealthySensor(SensorEntity):
         self._state = sum(1 for h in health_states.values() if h == HEALTH_OK)
 
 
-class LSGLateSensor(SensorEntity):
+class LSGLateSensor(LSGBaseSensor, SensorEntity):
     """Sensor showing count of late entities."""
     
-    def __init__(self, hass: HomeAssistant, evaluator):
+    def __init__(self, hass: HomeAssistant, evaluator, entry: ConfigEntry):
         """Initialize the sensor."""
-        self._hass = hass
-        self._evaluator = evaluator
+        super().__init__(hass, evaluator, entry)
         self._attr_name = "LSG Late Entities"
         self._attr_unique_id = f"{DOMAIN}_late_entities"
         self._attr_icon = "mdi:clock-alert-outline"
         self._attr_native_unit_of_measurement = "entities"
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._state = 0
-        self._unsub_update = None
     
     @property
     def native_value(self) -> int:
@@ -255,11 +261,6 @@ class LSGLateSensor(SensorEntity):
             self._hass, _update, timedelta(minutes=1)
         )
         _update()
-    
-    async def async_will_remove_from_hass(self) -> None:
-        """Cleanup on removal."""
-        if self._unsub_update:
-            self._unsub_update()
     
     def _update_state(self) -> None:
         """Update the sensor state."""
@@ -267,20 +268,18 @@ class LSGLateSensor(SensorEntity):
         self._state = sum(1 for h in health_states.values() if h == HEALTH_LATE)
 
 
-class LSGStaleSensor(SensorEntity):
+class LSGStaleSensor(LSGBaseSensor, SensorEntity):
     """Sensor showing count of stale entities."""
     
-    def __init__(self, hass: HomeAssistant, evaluator):
+    def __init__(self, hass: HomeAssistant, evaluator, entry: ConfigEntry):
         """Initialize the sensor."""
-        self._hass = hass
-        self._evaluator = evaluator
+        super().__init__(hass, evaluator, entry)
         self._attr_name = "LSG Stale Entities"
         self._attr_unique_id = f"{DOMAIN}_stale_entities"
         self._attr_icon = "mdi:alert-circle-outline"
         self._attr_native_unit_of_measurement = "entities"
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._state = 0
-        self._unsub_update = None
     
     @property
     def native_value(self) -> int:
@@ -298,11 +297,6 @@ class LSGStaleSensor(SensorEntity):
             self._hass, _update, timedelta(minutes=1)
         )
         _update()
-    
-    async def async_will_remove_from_hass(self) -> None:
-        """Cleanup on removal."""
-        if self._unsub_update:
-            self._unsub_update()
     
     def _update_state(self) -> None:
         """Update the sensor state."""
@@ -310,20 +304,18 @@ class LSGStaleSensor(SensorEntity):
         self._state = sum(1 for h in health_states.values() if h == HEALTH_STALE)
 
 
-class LSGUnknownSensor(SensorEntity):
+class LSGUnknownSensor(LSGBaseSensor, SensorEntity):
     """Sensor showing count of unknown entities."""
     
-    def __init__(self, hass: HomeAssistant, evaluator):
+    def __init__(self, hass: HomeAssistant, evaluator, entry: ConfigEntry):
         """Initialize the sensor."""
-        self._hass = hass
-        self._evaluator = evaluator
+        super().__init__(hass, evaluator, entry)
         self._attr_name = "LSG Unknown Entities"
         self._attr_unique_id = f"{DOMAIN}_unknown_entities"
         self._attr_icon = "mdi:help-circle-outline"
         self._attr_native_unit_of_measurement = "entities"
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._state = 0
-        self._unsub_update = None
     
     @property
     def native_value(self) -> int:
@@ -341,11 +333,6 @@ class LSGUnknownSensor(SensorEntity):
             self._hass, _update, timedelta(minutes=1)
         )
         _update()
-    
-    async def async_will_remove_from_hass(self) -> None:
-        """Cleanup on removal."""
-        if self._unsub_update:
-            self._unsub_update()
     
     def _update_state(self) -> None:
         """Update the sensor state."""

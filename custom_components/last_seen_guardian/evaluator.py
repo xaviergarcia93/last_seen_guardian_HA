@@ -2,22 +2,36 @@
 import asyncio
 import logging
 import time
-from typing import Dict, Optional, Set
+from typing import Dict, Optional, Set, Tuple
 from datetime import datetime, timedelta
 from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.helpers.event import async_track_time_interval
-from .const import DOMAIN, HEALTH_OK, HEALTH_LATE, HEALTH_STALE, HEALTH_UNKNOWN
+from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
+
+from .const import (
+    DOMAIN,
+    HEALTH_OK,
+    HEALTH_LATE,
+    HEALTH_STALE,
+    HEALTH_UNKNOWN,
+    MODE_CONFIGS,
+    BATTERY_LOW_THRESHOLD,
+    BATTERY_CRITICAL_THRESHOLD,
+    LQI_LOW_THRESHOLD,
+    RSSI_LOW_THRESHOLD,
+)
+from .data_validator import DataValidator
 
 _LOGGER = logging.getLogger(__name__)
 
 # Configuration for debounced persistence
-SAVE_DEBOUNCE_SECONDS = 30  # Wait 30s after last change before saving
-SAVE_MAX_WAIT_SECONDS = 300  # Force save every 5 minutes regardless
+SAVE_DEBOUNCE_SECONDS = 30
+SAVE_MAX_WAIT_SECONDS = 300
 
 
 class LSGEvaluator:
-    """Evaluator with pattern learning and health monitoring."""
+    """Evaluator with pattern learning, health monitoring, and technical context."""
     
     def __init__(self, hass: HomeAssistant):
         self._hass = hass
@@ -38,8 +52,14 @@ class LSGEvaluator:
         if self._storage:
             stored = await self._storage.async_get("learning_state")
             if stored:
-                self._learning_state = stored
-                _LOGGER.info("Loaded learning state for %d entities", len(stored))
+                # Validate and clean loaded state
+                is_valid, message, cleaned_state = DataValidator.validate_learning_state(stored)
+                if is_valid:
+                    self._learning_state = cleaned_state
+                    _LOGGER.info("Loaded learning state for %d entities: %s", 
+                                len(cleaned_state), message)
+                else:
+                    _LOGGER.warning("Invalid learning state: %s", message)
         
         # Subscribe to state changes
         @callback
@@ -65,7 +85,7 @@ class LSGEvaluator:
             timedelta(seconds=SAVE_MAX_WAIT_SECONDS)
         )
         
-        _LOGGER.info("Evaluator initialized with debounced persistence")
+        _LOGGER.info("Evaluator initialized with debounced persistence and technical monitoring")
     
     async def _async_update_entity_learning(
         self, entity_id: str, state: State
@@ -82,7 +102,8 @@ class LSGEvaluator:
                 "event_count": 0,
                 "threshold": None,
                 "last_health": HEALTH_UNKNOWN,
-                "history": []
+                "history": [],
+                "technical_context": {}  # v0.7
             }
         
         entity_state = self._learning_state[entity_id]
@@ -101,8 +122,9 @@ class LSGEvaluator:
                     (1 - alpha) * old_ewma + alpha * interval
                 )
             
-            # Update threshold (2.5x mean)
-            entity_state["threshold"] = entity_state["interval_ewma"] * 2.5
+            # MODE-AWARE: Get threshold multiplier from current mode
+            threshold_multiplier = await self._get_current_threshold_multiplier()
+            entity_state["threshold"] = entity_state["interval_ewma"] * threshold_multiplier
             
             # Store in history (keep last 100)
             entity_state["history"].append({
@@ -116,6 +138,9 @@ class LSGEvaluator:
         entity_state["last_event"] = now
         entity_state["event_count"] += 1
         
+        # v0.7: Extract technical context (battery, LQI, RSSI)
+        await self._extract_technical_context(entity_id, state, entity_state)
+        
         # Evaluate health
         old_health = entity_state.get("last_health")
         new_health = self._evaluate_health(entity_id)
@@ -124,8 +149,7 @@ class LSGEvaluator:
         # Track changed entity
         self._entities_changed.add(entity_id)
         
-        # FIXED: Use debounced save instead of saving every 10 events (WARNING #1)
-        # Only trigger immediate save if health changed to critical state
+        # Trigger save with priority if health degraded
         if old_health != new_health and new_health in (HEALTH_STALE, HEALTH_LATE):
             _LOGGER.debug(
                 "Entity %s health changed to %s, triggering priority save",
@@ -134,16 +158,91 @@ class LSGEvaluator:
             )
             await self._async_schedule_save(priority=True)
         else:
-            # Normal debounced save
             await self._async_schedule_save(priority=False)
     
-    async def _async_schedule_save(self, priority: bool = False) -> None:
+    async def _get_current_threshold_multiplier(self) -> float:
+        """Get threshold multiplier based on current mode (MODE-AWARE)."""
+        try:
+            config = await self._storage.async_get("config")
+            current_mode = config.get("modes", {}).get("current", "normal")
+            mode_config = MODE_CONFIGS.get(current_mode, MODE_CONFIGS["normal"])
+            return mode_config["threshold_multiplier"]
+        except Exception as e:
+            _LOGGER.warning("Could not get mode config: %s, using default", e)
+            return 2.5
+    
+    async def _extract_technical_context(
+        self, entity_id: str, state: State, entity_state: Dict
+    ) -> None:
         """
-        Schedule a debounced save operation.
+        Extract technical context from entity state (v0.7).
         
-        Args:
-            priority: If True, reduces debounce delay for critical changes
+        Monitors:
+        - Battery level
+        - LQI (Zigbee Link Quality Indicator)
+        - RSSI (WiFi/BLE Received Signal Strength Indicator)
         """
+        context = entity_state.setdefault("technical_context", {})
+        
+        # Battery monitoring
+        battery_level = None
+        if hasattr(state, "attributes"):
+            # Try common battery attributes
+            battery_level = (
+                state.attributes.get("battery_level") or
+                state.attributes.get("battery") or
+                state.attributes.get("battery_percent")
+            )
+            
+            # If entity_id contains 'battery', use state value
+            if battery_level is None and "battery" in entity_id.lower():
+                try:
+                    battery_level = float(state.state)
+                except (ValueError, TypeError):
+                    pass
+        
+        if battery_level is not None:
+            try:
+                battery_level = float(battery_level)
+                context["battery_level"] = battery_level
+                context["battery_timestamp"] = time.time()
+                
+                # Classify battery status
+                if battery_level <= BATTERY_CRITICAL_THRESHOLD:
+                    context["battery_status"] = "critical"
+                elif battery_level <= BATTERY_LOW_THRESHOLD:
+                    context["battery_status"] = "low"
+                else:
+                    context["battery_status"] = "ok"
+            except (ValueError, TypeError):
+                pass
+        
+        # LQI monitoring (Zigbee)
+        if hasattr(state, "attributes"):
+            lqi = state.attributes.get("lqi") or state.attributes.get("linkquality")
+            if lqi is not None:
+                try:
+                    lqi = int(lqi)
+                    context["lqi"] = lqi
+                    context["lqi_timestamp"] = time.time()
+                    context["lqi_status"] = "low" if lqi < LQI_LOW_THRESHOLD else "ok"
+                except (ValueError, TypeError):
+                    pass
+        
+        # RSSI monitoring (WiFi/BLE)
+        if hasattr(state, "attributes"):
+            rssi = state.attributes.get("rssi") or state.attributes.get("signal_strength")
+            if rssi is not None:
+                try:
+                    rssi = int(rssi)
+                    context["rssi"] = rssi
+                    context["rssi_timestamp"] = time.time()
+                    context["rssi_status"] = "low" if rssi < RSSI_LOW_THRESHOLD else "ok"
+                except (ValueError, TypeError):
+                    pass
+    
+    async def _async_schedule_save(self, priority: bool = False) -> None:
+        """Schedule a debounced save operation."""
         # Cancel existing save task if any
         if self._save_task and not self._save_task.done():
             self._save_task.cancel()
@@ -168,11 +267,7 @@ class LSGEvaluator:
         self._pending_save = True
     
     async def _async_periodic_save(self, now=None) -> None:
-        """
-        Periodic forced save (called every SAVE_MAX_WAIT_SECONDS).
-        
-        This ensures data is persisted even if debounce keeps delaying.
-        """
+        """Periodic forced save (called every SAVE_MAX_WAIT_SECONDS)."""
         elapsed = time.time() - self._last_save_time
         
         if self._entities_changed and elapsed >= SAVE_MAX_WAIT_SECONDS:
@@ -198,13 +293,59 @@ class LSGEvaluator:
         if threshold is None or threshold <= 0:
             return HEALTH_UNKNOWN
         
-        # Health classification
+        # Health classification (mode-aware threshold already applied)
         if interval < threshold * 1.1:
             return HEALTH_OK
         elif interval < threshold * 2.0:
             return HEALTH_LATE
         else:
             return HEALTH_STALE
+    
+    def get_diagnostic_context(self, entity_id: str) -> Dict[str, any]:
+        """
+        Get diagnostic context for an entity (v0.7).
+        
+        Returns heuristic analysis of potential issues.
+        """
+        state = self._learning_state.get(entity_id)
+        if not state:
+            return {"diagnosis": "no_data"}
+        
+        context = state.get("technical_context", {})
+        health = self._evaluate_health(entity_id)
+        
+        diagnosis = {
+            "health": health,
+            "potential_causes": [],
+            "recommendations": []
+        }
+        
+        # Battery-related issues
+        if "battery_level" in context:
+            battery_status = context.get("battery_status")
+            if battery_status == "critical":
+                diagnosis["potential_causes"].append("battery_critical")
+                diagnosis["recommendations"].append("Replace battery immediately")
+            elif battery_status == "low":
+                diagnosis["potential_causes"].append("battery_low")
+                diagnosis["recommendations"].append("Battery needs replacement soon")
+        
+        # Network-related issues
+        if "lqi" in context and context.get("lqi_status") == "low":
+            diagnosis["potential_causes"].append("poor_zigbee_signal")
+            diagnosis["recommendations"].append("Move device closer to coordinator or add router")
+        
+        if "rssi" in context and context.get("rssi_status") == "low":
+            diagnosis["potential_causes"].append("poor_wifi_signal")
+            diagnosis["recommendations"].append("Improve WiFi coverage in this area")
+        
+        # Pattern-based diagnosis
+        if health == HEALTH_STALE and not diagnosis["potential_causes"]:
+            # No technical context, likely device offline
+            diagnosis["potential_causes"].append("device_offline")
+            diagnosis["recommendations"].append("Check device power and network connectivity")
+        
+        return diagnosis
     
     async def async_run_evaluation(self) -> Dict[str, str]:
         """Run full evaluation of all tracked entities."""
@@ -214,19 +355,29 @@ class LSGEvaluator:
         for entity_id, state in self._learning_state.items():
             health = self._evaluate_health(entity_id)
             results[entity_id] = health
-            
-            # Update last_health
             state["last_health"] = health
         
         _LOGGER.debug("Evaluation complete: %d entities", len(results))
         return results
     
     async def _async_save_learning_state(self) -> None:
-        """Persist learning state to storage."""
+        """Persist learning state to storage with validation."""
         if not self._storage:
             return
         
         try:
+            # Validate before saving
+            is_valid, message, cleaned_state = DataValidator.validate_learning_state(
+                self._learning_state
+            )
+            
+            if not is_valid:
+                _LOGGER.error("Learning state validation failed: %s", message)
+                return
+            
+            # Update in-memory state with cleaned version
+            self._learning_state = cleaned_state
+            
             # Save to storage
             await self._storage.async_set("learning_state", self._learning_state)
             
@@ -237,8 +388,9 @@ class LSGEvaluator:
             self._pending_save = False
             
             _LOGGER.debug(
-                "Learning state saved successfully (%d entities changed)",
-                changed_count
+                "Learning state saved successfully (%d entities changed): %s",
+                changed_count,
+                message
             )
             
         except Exception as e:
@@ -250,7 +402,15 @@ class LSGEvaluator:
     
     def get_entity_stats(self, entity_id: str) -> Optional[Dict]:
         """Get learning statistics for entity."""
-        return self._learning_state.get(entity_id)
+        state = self._learning_state.get(entity_id)
+        if not state:
+            return None
+        
+        # Include diagnostic context (v0.7)
+        stats = dict(state)
+        stats["diagnosis"] = self.get_diagnostic_context(entity_id)
+        
+        return stats
     
     def get_all_health_states(self) -> Dict[str, str]:
         """Get health states for all entities."""

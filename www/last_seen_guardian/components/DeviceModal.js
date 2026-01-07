@@ -8,6 +8,7 @@
  * - Learning statistics (EWMA, threshold, event count)
  * - Health timeline (last 10 events)
  * - Automatic diagnostics (battery, network, pattern)
+ * - Technical context (v0.7): Battery, LQI, RSSI
  * 
  * @param {Object} entity - Entity data with health and stats
  * @param {Object} hass - Home Assistant instance
@@ -25,9 +26,8 @@ export default function DeviceModal(entity, hass = null) {
     const stats = entity.stats || {};
     const health = entity.health || 'unknown';
     const history = stats.history || [];
-    
-    // Calculate diagnostics
-    const diagnostics = _generateDiagnostics(entity, stats);
+    const diagnosis = stats.diagnosis || {};
+    const technicalContext = stats.technical_context || {};
     
     // Modal content
     modal.innerHTML = `
@@ -56,11 +56,16 @@ export default function DeviceModal(entity, hass = null) {
                         <ha-icon icon="${_getHealthIcon(health)}"></ha-icon>
                         ${health.toUpperCase()}
                     </span>
-                    ${diagnostics.message ? `
-                        <p class="lsg-diagnostic-message">${diagnostics.message}</p>
+                    ${diagnosis.health ? `
+                        <p class="lsg-diagnostic-message">
+                            ${_getHealthMessage(diagnosis.health)}
+                        </p>
                     ` : ''}
                 </div>
             </section>
+            
+            <!-- Technical Context Section (v0.7) -->
+            ${_renderTechnicalContext(technicalContext)}
             
             <!-- Metadata Section -->
             <section class="lsg-modal-section">
@@ -141,22 +146,14 @@ export default function DeviceModal(entity, hass = null) {
             </section>
             
             <!-- Diagnostics Section -->
-            ${diagnostics.issues.length > 0 ? `
+            ${diagnosis.potential_causes && diagnosis.potential_causes.length > 0 ? `
                 <section class="lsg-modal-section">
                     <h3>
                         <ha-icon icon="mdi:stethoscope"></ha-icon>
                         Automatic Diagnostics
                     </h3>
                     <div class="lsg-diagnostics-list">
-                        ${diagnostics.issues.map(issue => `
-                            <div class="lsg-diagnostic-item lsg-diagnostic-${issue.severity}">
-                                <ha-icon icon="${issue.icon}"></ha-icon>
-                                <div>
-                                    <strong>${issue.title}</strong>
-                                    <p>${issue.description}</p>
-                                </div>
-                            </div>
-                        `).join('')}
+                        ${_renderDiagnostics(diagnosis)}
                     </div>
                 </section>
             ` : ''}
@@ -193,9 +190,9 @@ export default function DeviceModal(entity, hass = null) {
                 <ha-icon icon="mdi:open-in-new"></ha-icon>
                 View in HA
             </button>
-            <button class="lsg-btn lsg-btn-secondary" data-action="reset-learning" disabled>
-                <ha-icon icon="mdi:restore"></ha-icon>
-                Reset Learning
+            <button class="lsg-btn lsg-btn-secondary" data-action="export" title="Export diagnostics">
+                <ha-icon icon="mdi:download"></ha-icon>
+                Export
             </button>
             <button class="lsg-btn lsg-btn-primary" data-action="close">
                 Close
@@ -209,6 +206,7 @@ export default function DeviceModal(entity, hass = null) {
     const closeBtn = modal.querySelector('.lsg-modal-close');
     const closeFooterBtn = modal.querySelector('[data-action="close"]');
     const viewEntityBtn = modal.querySelector('[data-action="view-entity"]');
+    const exportBtn = modal.querySelector('[data-action="export"]');
     
     const closeModal = () => {
         overlay.classList.add('lsg-modal-closing');
@@ -233,6 +231,44 @@ export default function DeviceModal(entity, hass = null) {
         });
     }
     
+    // Export diagnostics (v0.8)
+    if (exportBtn) {
+        exportBtn.addEventListener('click', async () => {
+            try {
+                const diagnosticsData = {
+                    entity_id: entity.entity_id,
+                    timestamp: new Date().toISOString(),
+                    health: health,
+                    stats: stats,
+                    diagnosis: diagnosis,
+                    technical_context: technicalContext,
+                    metadata: {
+                        domain: entity.domain,
+                        platform: entity.platform,
+                        area_id: entity.area_id,
+                        device_id: entity.device_id,
+                        labels: entity.labels
+                    }
+                };
+                
+                const blob = new Blob(
+                    [JSON.stringify(diagnosticsData, null, 2)],
+                    { type: 'application/json' }
+                );
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `lsg_diagnostics_${entity.entity_id.replace('.', '_')}_${Date.now()}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+                
+                console.log('LSG: Diagnostics exported successfully');
+            } catch (error) {
+                console.error('LSG: Error exporting diagnostics:', error);
+            }
+        });
+    }
+    
     // Animate in
     setTimeout(() => overlay.classList.add('lsg-modal-open'), 10);
     
@@ -240,76 +276,137 @@ export default function DeviceModal(entity, hass = null) {
 }
 
 /**
- * Generate automatic diagnostics based on entity data
+ * Render technical context section (v0.7)
  * @private
  */
-function _generateDiagnostics(entity, stats) {
-    const issues = [];
-    const health = entity.health;
-    
-    // Health-based diagnostics
-    if (health === 'stale') {
-        const timeSinceLastEvent = Date.now() / 1000 - (stats.last_event || 0);
-        issues.push({
-            severity: 'error',
-            icon: 'mdi:alert-circle',
-            title: 'Entity Not Responding',
-            description: `No activity for ${_formatInterval(timeSinceLastEvent)}. Possible causes: device offline, battery dead, network issue.`
-        });
-    } else if (health === 'late') {
-        issues.push({
-            severity: 'warning',
-            icon: 'mdi:clock-alert',
-            title: 'Delayed Reporting',
-            description: 'Entity is reporting slower than expected. Monitor for potential issues.'
-        });
+function _renderTechnicalContext(context) {
+    if (!context || Object.keys(context).length === 0) {
+        return '';
     }
     
-    // Event count diagnostics
-    if (stats.event_count < 5) {
-        issues.push({
-            severity: 'info',
-            icon: 'mdi:information',
-            title: 'Learning Phase',
-            description: `Only ${stats.event_count || 0} events recorded. System is still learning normal patterns.`
-        });
-    }
+    const items = [];
     
-    // Pattern-based diagnostics
-    if (stats.interval_ewma && stats.threshold) {
-        const expectedMinutes = stats.interval_ewma / 60;
-        const thresholdMinutes = stats.threshold / 60;
+    // Battery
+    if ('battery_level' in context) {
+        const batteryLevel = context.battery_level;
+        const batteryStatus = context.battery_status || 'unknown';
+        const statusClass = batteryStatus === 'critical' ? 'error' : 
+                           batteryStatus === 'low' ? 'warning' : '';
         
-        if (expectedMinutes < 1) {
-            issues.push({
-                severity: 'info',
-                icon: 'mdi:flash',
-                title: 'High-Frequency Sensor',
-                description: `Reports every ${_formatInterval(stats.interval_ewma)} on average. This is normal for motion/binary sensors.`
-            });
-        } else if (expectedMinutes > 1440) {
-            issues.push({
-                severity: 'info',
-                icon: 'mdi:calendar-clock',
-                title: 'Low-Frequency Sensor',
-                description: `Reports every ${(expectedMinutes / 1440).toFixed(1)} days on average. This is normal for battery/update sensors.`
-            });
+        items.push(`
+            <div class="lsg-context-card ${statusClass ? 'lsg-context-' + statusClass : ''}">
+                <ha-icon class="lsg-context-icon" icon="mdi:battery"></ha-icon>
+                <div>
+                    <span class="lsg-context-label">Battery Level</span>
+                    <span class="lsg-context-value">${batteryLevel.toFixed(0)}%</span>
+                </div>
+            </div>
+        `);
+    }
+    
+    // LQI (Zigbee)
+    if ('lqi' in context) {
+        const lqi = context.lqi;
+        const lqiStatus = context.lqi_status || 'ok';
+        const statusClass = lqiStatus === 'low' ? 'warning' : '';
+        
+        items.push(`
+            <div class="lsg-context-card ${statusClass ? 'lsg-context-' + statusClass : ''}">
+                <ha-icon class="lsg-context-icon" icon="mdi:wifi"></ha-icon>
+                <div>
+                    <span class="lsg-context-label">Link Quality (LQI)</span>
+                    <span class="lsg-context-value">${lqi}</span>
+                </div>
+            </div>
+        `);
+    }
+    
+    // RSSI (WiFi/BLE)
+    if ('rssi' in context) {
+        const rssi = context.rssi;
+        const rssiStatus = context.rssi_status || 'ok';
+        const statusClass = rssiStatus === 'low' ? 'warning' : '';
+        
+        items.push(`
+            <div class="lsg-context-card ${statusClass ? 'lsg-context-' + statusClass : ''}">
+                <ha-icon class="lsg-context-icon" icon="mdi:signal"></ha-icon>
+                <div>
+                    <span class="lsg-context-label">Signal Strength (RSSI)</span>
+                    <span class="lsg-context-value">${rssi} dBm</span>
+                </div>
+            </div>
+        `);
+    }
+    
+    if (items.length === 0) {
+        return '';
+    }
+    
+    return `
+        <section class="lsg-modal-section">
+            <h3>
+                <ha-icon icon="mdi:chip"></ha-icon>
+                Technical Context
+            </h3>
+            <div class="lsg-technical-context">
+                ${items.join('')}
+            </div>
+        </section>
+    `;
+}
+
+/**
+ * Render diagnostics list
+ * @private
+ */
+function _renderDiagnostics(diagnosis) {
+    const causes = diagnosis.potential_causes || [];
+    const recommendations = diagnosis.recommendations || [];
+    
+    const items = [];
+    
+    // Map causes to diagnostic items
+    causes.forEach((cause, index) => {
+        const recommendation = recommendations[index] || '';
+        let severity = 'info';
+        let icon = 'mdi:information';
+        
+        if (cause.includes('critical') || cause.includes('offline')) {
+            severity = 'error';
+            icon = 'mdi:alert-circle';
+        } else if (cause.includes('low') || cause.includes('poor')) {
+            severity = 'warning';
+            icon = 'mdi:alert';
         }
-    }
+        
+        const title = cause.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        
+        items.push(`
+            <div class="lsg-diagnostic-item lsg-diagnostic-${severity}">
+                <ha-icon icon="${icon}"></ha-icon>
+                <div>
+                    <strong>${title}</strong>
+                    ${recommendation ? `<p>${recommendation}</p>` : ''}
+                </div>
+            </div>
+        `);
+    });
     
-    // Generate summary message
-    let message = '';
-    if (health === 'ok') {
-        message = '✓ Entity is operating normally within expected patterns.';
-    } else if (health === 'late') {
-        message = '⚠ Entity is delayed but may recover. Continue monitoring.';
-    } else if (health === 'stale') {
-        message = '✗ Entity appears offline or unresponsive. Investigation needed.';
-    } else {
-        message = 'ℹ Insufficient data to determine health status.';
-    }
-    
-    return { issues, message };
+    return items.join('');
+}
+
+/**
+ * Get health message
+ * @private
+ */
+function _getHealthMessage(health) {
+    const messages = {
+        'ok': '✓ Entity is operating normally within expected patterns.',
+        'late': '⚠ Entity is delayed but may recover. Continue monitoring.',
+        'stale': '✗ Entity appears offline or unresponsive. Investigation needed.',
+        'unknown': 'ℹ Insufficient data to determine health status.'
+    };
+    return messages[health] || messages.unknown;
 }
 
 /**

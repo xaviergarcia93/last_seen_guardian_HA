@@ -16,7 +16,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.exceptions import ConfigEntryNotReady
 
-from .const import DOMAIN, DEFAULT_CHECK_INTERVAL, PLATFORMS
+from .const import DOMAIN, DEFAULT_CHECK_INTERVAL, PLATFORMS, VERSION
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Last Seen Guardian from a config entry."""
-    _LOGGER.info("Setting up Last Seen Guardian integration")
+    _LOGGER.info("Setting up Last Seen Guardian integration v%s", VERSION)
     
     # Initialize domain data
     hass.data.setdefault(DOMAIN, {})
@@ -38,6 +38,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Track initialization state
     hass.data[DOMAIN]["_ready"] = False
     hass.data[DOMAIN]["_unsub_eval"] = None
+    hass.data[DOMAIN]["version"] = VERSION
     
     try:
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -91,7 +92,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             raise ConfigEntryNotReady(f"Evaluator initialization failed: {e}") from e
         
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # STEP 4: Register WebSocket API
+        # STEP 4: Initialize Notification Manager (v0.6)
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        _LOGGER.debug("Initializing notification manager...")
+        
+        from .notify import LSGNotificationManager
+        
+        try:
+            notifier = LSGNotificationManager(hass)
+            await notifier.async_setup()
+            hass.data[DOMAIN]["notifier"] = notifier
+            _LOGGER.info("✓ Notification manager initialized")
+        except Exception as e:
+            _LOGGER.exception("Failed to initialize notifier: %s", e)
+            # Notifications are not critical
+            _LOGGER.warning("Continuing without notification support")
+            hass.data[DOMAIN]["notifier"] = None
+        
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # STEP 5: Register WebSocket API
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         _LOGGER.debug("Registering WebSocket API...")
         
@@ -106,7 +125,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             raise ConfigEntryNotReady(f"WebSocket API registration failed: {e}") from e
         
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # STEP 5: Register Frontend Panel
+        # STEP 6: Register Frontend Panel
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         _LOGGER.debug("Registering frontend panel...")
         
@@ -121,7 +140,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.warning("Panel not available, but core functionality will work")
         
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # STEP 6: Setup Periodic Evaluation Loop
+        # STEP 7: Setup Periodic Evaluation Loop
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         _LOGGER.debug("Setting up periodic evaluation...")
         
@@ -157,7 +176,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     check_interval)
         
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # STEP 7: Setup Platforms (Sensors)
+        # STEP 8: Setup Platforms (Sensors)
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         _LOGGER.debug("Setting up platforms...")
         
@@ -165,11 +184,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.info("✓ Platforms setup complete")
         
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # STEP 8: Mark as Ready
+        # STEP 9: Mark as Ready
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         hass.data[DOMAIN]["_ready"] = True
         _LOGGER.info("═══════════════════════════════════════════════")
-        _LOGGER.info("✓ Last Seen Guardian fully initialized")
+        _LOGGER.info("✓ Last Seen Guardian v%s fully initialized", VERSION)
         _LOGGER.info("═══════════════════════════════════════════════")
         
         return True
@@ -266,7 +285,17 @@ async def _async_cleanup(hass: HomeAssistant) -> None:
         except Exception as e:
             _LOGGER.exception("Error cancelling evaluation loop: %s", e)
     
-    # 2. Unload evaluator
+    # 2. Unload notification manager
+    notifier = domain_data.get("notifier")
+    if notifier:
+        try:
+            if hasattr(notifier, "async_unload"):
+                await notifier.async_unload()
+            _LOGGER.debug("✓ Notification manager unloaded")
+        except Exception as e:
+            _LOGGER.exception("Error unloading notifier: %s", e)
+    
+    # 3. Unload evaluator
     evaluator = domain_data.get("evaluator")
     if evaluator:
         try:
@@ -276,7 +305,7 @@ async def _async_cleanup(hass: HomeAssistant) -> None:
         except Exception as e:
             _LOGGER.exception("Error unloading evaluator: %s", e)
     
-    # 3. Unload registry
+    # 4. Unload registry
     registry = domain_data.get("registry")
     if registry:
         try:
@@ -286,7 +315,7 @@ async def _async_cleanup(hass: HomeAssistant) -> None:
         except Exception as e:
             _LOGGER.exception("Error unloading registry: %s", e)
     
-    # 4. Save and close storage
+    # 5. Save and close storage
     storage = domain_data.get("storage")
     if storage:
         try:
@@ -296,7 +325,7 @@ async def _async_cleanup(hass: HomeAssistant) -> None:
         except Exception as e:
             _LOGGER.exception("Error saving storage: %s", e)
     
-    # 5. Clear references
+    # 6. Clear references
     domain_data.clear()
     
     _LOGGER.debug("Cleanup completed")
