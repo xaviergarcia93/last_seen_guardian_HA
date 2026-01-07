@@ -184,7 +184,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.info("✓ Platforms setup complete")
         
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # STEP 9: Mark as Ready
+        # STEP 9: Register Services
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        _LOGGER.debug("Registering services...")
+        
+        try:
+            from .services import async_setup_services
+            
+            await async_setup_services(hass)
+            _LOGGER.info("✓ Services registered")
+        except Exception as e:
+            _LOGGER.exception("Failed to register services: %s", e)
+            # Services are not critical
+            _LOGGER.warning("Continuing without services")
+        
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # STEP 10: Mark as Ready
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         hass.data[DOMAIN]["_ready"] = True
         _LOGGER.info("═══════════════════════════════════════════════")
@@ -209,13 +224,22 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.info("Unloading Last Seen Guardian integration")
     
     try:
-        # Unload platforms first
+        # 1. Unload services FIRST
+        try:
+            from .services import async_unload_services
+            await async_unload_services(hass)
+            _LOGGER.debug("✓ Services unloaded")
+        except Exception as e:
+            _LOGGER.exception("Error unloading services: %s", e)
+        
+        # 2. Unload platforms
         unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
         
         if unload_ok:
+            # 3. Cleanup all components
             await _async_cleanup(hass)
             
-            # Clear domain data
+            # 4. Clear domain data
             if DOMAIN in hass.data:
                 hass.data.pop(DOMAIN)
             

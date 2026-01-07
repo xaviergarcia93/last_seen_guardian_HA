@@ -1,0 +1,53 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up Last Seen Guardian",
+        "description": "Configure Last Seen Guardian to monitor entity health and detect failures.",
+        "data": {
+          "check_every_minutes": "Evaluation interval (minutes)",
+          "alert_threshold_multiplier": "Alert threshold multiplier",
+          "enable_notifications": "Enable notifications"
+        },
+        "data_description": {
+          "check_every_minutes": "How often to evaluate entity health (5-120 minutes). Default: {default_interval}",
+          "alert_threshold_multiplier": "Multiplier for alert threshold (1.5-10.0). Default: {default_multiplier}",
+          "enable_notifications": "Send notifications when entities become stale or late"
+        }
+      }
+    },
+    "error": {
+      "invalid_interval": "Interval must be between 5 and 120 minutes",
+      "invalid_threshold": "Threshold must be between 1.5 and 10.0"
+    },
+    "abort": {
+      "already_configured": "Last Seen Guardian is already configured",
+      "single_instance_allowed": "Only a single instance is allowed"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Last Seen Guardian Options",
+        "description": "Configure Last Seen Guardian settings",
+        "data": {
+          "check_every_minutes": "Evaluation interval (minutes)",
+          "alert_threshold_multiplier": "Alert threshold multiplier",
+          "enable_notifications": "Enable notifications",
+          "notify_target": "Notification service"
+        },
+        "data_description": {
+          "check_every_minutes": "Current: {current_interval} minutes",
+          "alert_threshold_multiplier": "Current: {current_multiplier}",
+          "enable_notifications": "Toggle notification alerts",
+          "notify_target": "Home Assistant notify service (e.g., notify.mobile_app)"
+        }
+      }
+    },
+    "error": {
+      "invalid_interval": "Interval must be between 5 and 120 minutes",
+      "invalid_threshold": "Threshold must be between 1.5 and 10.0"
+    }
+  },
+  "title": "Last Seen Guardian"
+}

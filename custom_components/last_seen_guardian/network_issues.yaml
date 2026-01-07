@@ -1,0 +1,66 @@
+blueprint:
+  name: LSG - Network Issues Alert
+  description: Alert when entities have poor network signal (LQI/RSSI)
+  domain: automation
+  input:
+    notify_service:
+      name: Notification Service
+      description: The notify service to use
+      default: notify.notify
+      selector:
+        text:
+    
+    check_interval:
+      name: Check Interval
+      description: How often to check for network issues
+      default: 60
+      selector:
+        number:
+          min: 15
+          max: 1440
+          mode: box
+          unit_of_measurement: "minutes"
+
+trigger:
+  - platform: time_pattern
+    minutes: "/{{ check_interval }}"
+
+condition: []
+
+action:
+  # Call LSG service to export diagnostics
+  - service: last_seen_guardian.export_diagnostics
+    response_variable: diagnostics_data
+  
+  # Check entities with poor signal
+  - variables:
+      poor_signal_entities: >
+        {% set ns = namespace(entities=[]) %}
+        {% for entity in diagnostics_data.diagnostics.entities %}
+          {% set context = entity.stats.technical_context %}
+          {% if context.lqi_status is defined and context.lqi_status == 'low' %}
+            {% set ns.entities = ns.entities + [entity.entity_id ~ ' (LQI: ' ~ context.lqi ~ ')'] %}
+          {% elif context.rssi_status is defined and context.rssi_status == 'low' %}
+            {% set ns.entities = ns.entities + [entity.entity_id ~ ' (RSSI: ' ~ context.rssi ~ ' dBm)'] %}
+          {% endif %}
+        {% endfor %}
+        {{ ns.entities }}
+  
+  # Send notification if any found
+  - condition: template
+    value_template: "{{ poor_signal_entities | length > 0 }}"
+  
+  - service: !input notify_service
+    data:
+      title: "📶 LSG: Network Issues Detected"
+      message: >
+        {{ poor_signal_entities | length }} device(s) have poor signal:
+        
+        {{ poor_signal_entities | join('\n') }}
+        
+        Consider improving network coverage or moving devices.
+      data:
+        priority: normal
+        tag: lsg_network_alert
+
+mode: single

@@ -8,6 +8,7 @@ from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
+from .recorder import LSGRecorderIntegration
 
 from .const import (
     DOMAIN,
@@ -22,6 +23,7 @@ from .const import (
     RSSI_LOW_THRESHOLD,
 )
 from .data_validator import DataValidator
+from .health_cache import HealthCache
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -46,6 +48,12 @@ class LSGEvaluator:
         self._last_save_time = 0
         self._entities_changed: Set[str] = set()
         
+        # Health cache for performance (MEJORA #1)
+        self._health_cache = HealthCache(ttl=60, max_size=1000)
+        
+        # Recorder integration (MEJORA #5)
+        self._recorder = LSGRecorderIntegration(hass)
+
     async def async_setup(self) -> None:
         """Initialize evaluator and load learning state."""
         self._storage = self._hass.data[DOMAIN].get("storage")
@@ -85,13 +93,16 @@ class LSGEvaluator:
             timedelta(seconds=SAVE_MAX_WAIT_SECONDS)
         )
         
-        _LOGGER.info("Evaluator initialized with debounced persistence and technical monitoring")
+        _LOGGER.info("Evaluator initialized with cache, debouncing, and technical monitoring")
     
     async def _async_update_entity_learning(
         self, entity_id: str, state: State
     ) -> None:
         """Update learning state when entity changes."""
         now = time.time()
+        
+        # INVALIDATE CACHE WHEN ENTITY UPDATES (AQUÍ VA LA MODIFICACIÓN)
+        self._health_cache.invalidate(entity_id)
         
         # Get or create learning state
         if entity_id not in self._learning_state:
@@ -146,6 +157,19 @@ class LSGEvaluator:
         new_health = self._evaluate_health(entity_id)
         entity_state["last_health"] = new_health
         
+        # Fire event if health changed (MEJORA #5)
+        if old_health != new_health:
+            self._recorder.fire_health_changed_event(
+                entity_id, old_health, new_health, entity_state
+            )
+
+        # Fire learned event at 10 events (sufficient data)
+        if entity_state["event_count"] == 10:
+            self._recorder.fire_entity_learned_event(
+                entity_id,
+                entity_state["interval_ewma"],
+                entity_state["event_count"]
+            )
         # Track changed entity
         self._entities_changed.add(entity_id)
         
@@ -277,6 +301,9 @@ class LSGEvaluator:
                 int(elapsed)
             )
             await self._async_save_learning_state()
+        
+        # Also cleanup expired cache entries
+        self._health_cache.cleanup_expired()
     
     def _evaluate_health(self, entity_id: str) -> str:
         """Evaluate health status based on learning."""
@@ -350,14 +377,21 @@ class LSGEvaluator:
     async def async_run_evaluation(self) -> Dict[str, str]:
         """Run full evaluation of all tracked entities."""
         results = {}
-        now = time.time()
         
         for entity_id, state in self._learning_state.items():
             health = self._evaluate_health(entity_id)
             results[entity_id] = health
             state["last_health"] = health
+            
+            # Update cache
+            self._health_cache.set(entity_id, health)
         
         _LOGGER.debug("Evaluation complete: %d entities", len(results))
+        
+        # Log cache stats
+        cache_stats = self._health_cache.get_stats()
+        _LOGGER.debug("Cache stats: %s", cache_stats)
+        
         return results
     
     async def _async_save_learning_state(self) -> None:
@@ -397,8 +431,21 @@ class LSGEvaluator:
             _LOGGER.exception("Error saving learning state: %s", e)
     
     def get_entity_health(self, entity_id: str) -> str:
-        """Get current health status for entity."""
-        return self._evaluate_health(entity_id)
+        """
+        Get current health status for entity (with cache).
+        
+        MEJORA #1: Usa caché para reducir cálculos.
+        """
+        # Check cache first
+        cached_health = self._health_cache.get(entity_id)
+        if cached_health is not None:
+            return cached_health
+        
+        # Calculate and cache
+        health = self._evaluate_health(entity_id)
+        self._health_cache.set(entity_id, health)
+        
+        return health
     
     def get_entity_stats(self, entity_id: str) -> Optional[Dict]:
         """Get learning statistics for entity."""
@@ -413,11 +460,15 @@ class LSGEvaluator:
         return stats
     
     def get_all_health_states(self) -> Dict[str, str]:
-        """Get health states for all entities."""
+        """Get health states for all entities (with cache optimization)."""
         return {
-            eid: self._evaluate_health(eid)
+            eid: self.get_entity_health(eid)
             for eid in self._learning_state.keys()
         }
+    
+    def get_cache_stats(self) -> Dict[str, any]:
+        """Get health cache statistics."""
+        return self._health_cache.get_stats()
     
     async def async_unload(self) -> None:
         """Cleanup and save state."""
@@ -441,4 +492,6 @@ class LSGEvaluator:
             self._unsubscribe_timer()
             self._unsubscribe_timer = None
         
-        _LOGGER.info("Evaluator unloaded, final state saved")
+        # Log final cache stats
+        cache_stats = self._health_cache.get_stats()
+        _LOGGER.info("Evaluator unloaded. Final cache stats: %s", cache_stats)

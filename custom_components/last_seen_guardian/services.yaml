@@ -1,0 +1,72 @@
+# Service definitions for Last Seen Guardian
+
+reset_learning:
+  name: Reset Learning
+  description: Reset learning state for one or all entities
+  fields:
+    entity_id:
+      name: Entity ID
+      description: Entity to reset learning for. If not provided, resets all entities.
+      required: false
+      example: "sensor.temperature_living_room"
+      selector:
+        entity:
+
+force_evaluation:
+  name: Force Evaluation
+  description: Force immediate evaluation of all entities
+  fields: {}
+
+export_diagnostics:
+  name: Export Diagnostics
+  description: Export diagnostics data for an entity or entire system
+  fields:
+    entity_id:
+      name: Entity ID
+      description: Entity to export diagnostics for. If not provided, exports full system diagnostics.
+      required: false
+      example: "sensor.temperature_living_room"
+      selector:
+        entity:
+    path:
+      name: File Path
+      description: Path where to save the diagnostics file
+      required: false
+      example: "/config/lsg_diagnostics.json"
+      selector:
+        text:
+
+set_mode:
+  name: Set Mode
+  description: Change the operation mode
+  fields:
+    mode:
+      name: Mode
+      description: Operation mode to activate
+      required: true
+      example: "vacation"
+      selector:
+        select:
+          options:
+            - "normal"
+            - "vacation"
+            - "night"
+
+cleanup_data:
+  name: Cleanup Data
+  description: Clean up old data and optimize storage
+  fields:
+    remove_orphaned:
+      name: Remove Orphaned Entities
+      description: Remove entities that no longer exist in Home Assistant
+      required: false
+      default: true
+      selector:
+        boolean:
+    compress_history:
+      name: Compress History
+      description: Compress old history events to save space
+      required: false
+      default: true
+      selector:
+        boolean:
