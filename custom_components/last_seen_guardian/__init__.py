@@ -199,7 +199,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.warning("Continuing without services")
         
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # STEP 10: Mark as Ready
+        # STEP 10: Register Logbook Integration
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        _LOGGER.debug("Registering logbook integration...")
+        
+        try:
+            from . import logbook
+            # Logbook auto-discovers via async_describe_events
+            _LOGGER.info("✓ Logbook integration available")
+        except Exception as e:
+            _LOGGER.exception("Failed to import logbook: %s", e)
+            _LOGGER.warning("Continuing without logbook integration")
+        
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # STEP 11: Mark as Ready
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         hass.data[DOMAIN]["_ready"] = True
         _LOGGER.info("═══════════════════════════════════════════════")
