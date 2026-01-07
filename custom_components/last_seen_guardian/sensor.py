@@ -5,6 +5,7 @@ Creates binary_sensor and sensor entities for system status.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
 from homeassistant.components.binary_sensor import (
@@ -31,9 +32,13 @@ from .const import (
     DEVICE_MANUFACTURER,
     DEVICE_MODEL,
     DEVICE_SW_VERSION,
+    MIN_EVENTS_FOR_NOTIFICATION,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# CRITICAL: Wait 15 minutes after startup before updating sensors
+SENSOR_STARTUP_DELAY = 900  # 15 minutes
 
 
 async def async_setup_entry(
@@ -61,11 +66,12 @@ async def async_setup_entry(
     ]
     
     async_add_entities(entities)
-    _LOGGER.info("LSG sensor platform setup complete: %d entities", len(entities))
+    _LOGGER.info("LSG sensor platform setup complete: %d entities (startup delay: %ds)", 
+                len(entities), SENSOR_STARTUP_DELAY)
 
 
 class LSGBaseSensor:
-    """Base class for LSG sensors with device info."""
+    """Base class for LSG sensors with device info and startup protection."""
     
     def __init__(self, hass: HomeAssistant, evaluator, entry: ConfigEntry):
         """Initialize base sensor."""
@@ -73,6 +79,7 @@ class LSGBaseSensor:
         self._evaluator = evaluator
         self._entry = entry
         self._unsub_update = None
+        self._startup_time = time.time()
     
     @property
     def device_info(self) -> DeviceInfo:
@@ -84,6 +91,11 @@ class LSGBaseSensor:
             model=DEVICE_MODEL,
             sw_version=DEVICE_SW_VERSION,
         )
+    
+    def _is_ready(self) -> bool:
+        """Check if sensor is ready to update (after startup delay)."""
+        elapsed = time.time() - self._startup_time
+        return elapsed >= SENSOR_STARTUP_DELAY
     
     async def async_will_remove_from_hass(self) -> None:
         """Cleanup on removal."""
@@ -111,15 +123,33 @@ class LSGAnyProblemBinarySensor(LSGBaseSensor, BinarySensorEntity):
     @property
     def extra_state_attributes(self) -> Dict[str, Any]:
         """Return additional attributes."""
+        if not self._is_ready():
+            return {
+                "status": "learning",
+                "message": "Waiting for initial learning phase",
+                "stale_entities": 0,
+                "late_entities": 0,
+                "total_monitored": 0,
+            }
+        
         health_states = self._evaluator.get_all_health_states()
         
-        stale_count = sum(1 for h in health_states.values() if h == HEALTH_STALE)
-        late_count = sum(1 for h in health_states.values() if h == HEALTH_LATE)
+        # Only count entities with sufficient learning
+        valid_entities = {
+            eid: h for eid, h in health_states.items()
+            if self._evaluator.get_entity_stats(eid) and
+            self._evaluator.get_entity_stats(eid).get("event_count", 0) >= MIN_EVENTS_FOR_NOTIFICATION
+        }
+        
+        stale_count = sum(1 for h in valid_entities.values() if h == HEALTH_STALE)
+        late_count = sum(1 for h in valid_entities.values() if h == HEALTH_LATE)
         
         return {
+            "status": "active",
             "stale_entities": stale_count,
             "late_entities": late_count,
-            "total_monitored": len(health_states),
+            "total_monitored": len(valid_entities),
+            "learning_entities": len(health_states) - len(valid_entities),
         }
     
     async def async_added_to_hass(self) -> None:
@@ -127,20 +157,36 @@ class LSGAnyProblemBinarySensor(LSGBaseSensor, BinarySensorEntity):
         @callback
         def _update(now=None):
             """Update sensor state."""
-            self._update_state()
+            if not self._is_ready():
+                self._is_on = False
+                _LOGGER.debug("Sensor in startup delay, state=OFF")
+            else:
+                self._update_state()
+            
             self.async_write_ha_state()
         
+        # Update every 5 minutes (not 1)
         self._unsub_update = async_track_time_interval(
-            self._hass, _update, timedelta(minutes=1)
+            self._hass, _update, timedelta(minutes=5)
         )
+        
+        # Immediate update
         _update()
     
     def _update_state(self) -> None:
         """Update the sensor state."""
         health_states = self._evaluator.get_all_health_states()
+        
+        # Only count entities with sufficient learning
+        valid_entities = [
+            h for eid, h in health_states.items()
+            if self._evaluator.get_entity_stats(eid) and
+            self._evaluator.get_entity_stats(eid).get("event_count", 0) >= MIN_EVENTS_FOR_NOTIFICATION
+        ]
+        
         self._is_on = any(
             h in (HEALTH_STALE, HEALTH_LATE) 
-            for h in health_states.values()
+            for h in valid_entities
         )
 
 
@@ -166,9 +212,17 @@ class LSGFailedEntitiesCountSensor(LSGBaseSensor, SensorEntity):
     @property
     def extra_state_attributes(self) -> Dict[str, Any]:
         """Return list of failed entity IDs."""
+        if not self._is_ready():
+            return {
+                "entity_ids": [],
+                "count": 0,
+                "status": "learning",
+            }
+        
         return {
             "entity_ids": self._failed_list,
             "count": len(self._failed_list),
+            "status": "active",
         }
     
     async def async_added_to_hass(self) -> None:
@@ -176,11 +230,17 @@ class LSGFailedEntitiesCountSensor(LSGBaseSensor, SensorEntity):
         @callback
         def _update(now=None):
             """Update sensor state."""
-            self._update_state()
+            if not self._is_ready():
+                self._state = 0
+                self._failed_list = []
+            else:
+                self._update_state()
+            
             self.async_write_ha_state()
         
+        # Update every 5 minutes
         self._unsub_update = async_track_time_interval(
-            self._hass, _update, timedelta(minutes=1)
+            self._hass, _update, timedelta(minutes=5)
         )
         _update()
     
@@ -188,10 +248,13 @@ class LSGFailedEntitiesCountSensor(LSGBaseSensor, SensorEntity):
         """Update the sensor state."""
         health_states = self._evaluator.get_all_health_states()
         
+        # Only count entities with sufficient learning
         self._failed_list = [
             entity_id 
             for entity_id, health in health_states.items() 
-            if health == HEALTH_STALE
+            if health == HEALTH_STALE and
+            self._evaluator.get_entity_stats(entity_id) and
+            self._evaluator.get_entity_stats(entity_id).get("event_count", 0) >= MIN_EVENTS_FOR_NOTIFICATION
         ]
         self._state = len(self._failed_list)
 
@@ -218,18 +281,28 @@ class LSGHealthySensor(LSGBaseSensor, SensorEntity):
         """Register update callback."""
         @callback
         def _update(now=None):
-            self._update_state()
+            if not self._is_ready():
+                self._state = 0
+            else:
+                self._update_state()
             self.async_write_ha_state()
         
         self._unsub_update = async_track_time_interval(
-            self._hass, _update, timedelta(minutes=1)
+            self._hass, _update, timedelta(minutes=5)
         )
         _update()
     
     def _update_state(self) -> None:
         """Update the sensor state."""
         health_states = self._evaluator.get_all_health_states()
-        self._state = sum(1 for h in health_states.values() if h == HEALTH_OK)
+        
+        # Only count entities with sufficient learning
+        self._state = sum(
+            1 for eid, h in health_states.items()
+            if h == HEALTH_OK and
+            self._evaluator.get_entity_stats(eid) and
+            self._evaluator.get_entity_stats(eid).get("event_count", 0) >= MIN_EVENTS_FOR_NOTIFICATION
+        )
 
 
 class LSGLateSensor(LSGBaseSensor, SensorEntity):
@@ -254,18 +327,27 @@ class LSGLateSensor(LSGBaseSensor, SensorEntity):
         """Register update callback."""
         @callback
         def _update(now=None):
-            self._update_state()
+            if not self._is_ready():
+                self._state = 0
+            else:
+                self._update_state()
             self.async_write_ha_state()
         
         self._unsub_update = async_track_time_interval(
-            self._hass, _update, timedelta(minutes=1)
+            self._hass, _update, timedelta(minutes=5)
         )
         _update()
     
     def _update_state(self) -> None:
         """Update the sensor state."""
         health_states = self._evaluator.get_all_health_states()
-        self._state = sum(1 for h in health_states.values() if h == HEALTH_LATE)
+        
+        self._state = sum(
+            1 for eid, h in health_states.items()
+            if h == HEALTH_LATE and
+            self._evaluator.get_entity_stats(eid) and
+            self._evaluator.get_entity_stats(eid).get("event_count", 0) >= MIN_EVENTS_FOR_NOTIFICATION
+        )
 
 
 class LSGStaleSensor(LSGBaseSensor, SensorEntity):
@@ -290,18 +372,27 @@ class LSGStaleSensor(LSGBaseSensor, SensorEntity):
         """Register update callback."""
         @callback
         def _update(now=None):
-            self._update_state()
+            if not self._is_ready():
+                self._state = 0
+            else:
+                self._update_state()
             self.async_write_ha_state()
         
         self._unsub_update = async_track_time_interval(
-            self._hass, _update, timedelta(minutes=1)
+            self._hass, _update, timedelta(minutes=5)
         )
         _update()
     
     def _update_state(self) -> None:
         """Update the sensor state."""
         health_states = self._evaluator.get_all_health_states()
-        self._state = sum(1 for h in health_states.values() if h == HEALTH_STALE)
+        
+        self._state = sum(
+            1 for eid, h in health_states.items()
+            if h == HEALTH_STALE and
+            self._evaluator.get_entity_stats(eid) and
+            self._evaluator.get_entity_stats(eid).get("event_count", 0) >= MIN_EVENTS_FOR_NOTIFICATION
+        )
 
 
 class LSGUnknownSensor(LSGBaseSensor, SensorEntity):
@@ -322,19 +413,46 @@ class LSGUnknownSensor(LSGBaseSensor, SensorEntity):
         """Return the count."""
         return self._state
     
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return learning status."""
+        if not self._is_ready():
+            return {
+                "status": "startup_delay",
+                "message": "Sensors will activate after startup delay",
+            }
+        
+        return {
+            "status": "active",
+        }
+    
     async def async_added_to_hass(self) -> None:
         """Register update callback."""
         @callback
         def _update(now=None):
-            self._update_state()
+            if not self._is_ready():
+                # Show all as unknown during learning
+                health_states = self._evaluator.get_all_health_states()
+                self._state = len(health_states)
+            else:
+                self._update_state()
+            
             self.async_write_ha_state()
         
         self._unsub_update = async_track_time_interval(
-            self._hass, _update, timedelta(minutes=1)
+            self._hass, _update, timedelta(minutes=5)
         )
         _update()
     
     def _update_state(self) -> None:
         """Update the sensor state."""
         health_states = self._evaluator.get_all_health_states()
-        self._state = sum(1 for h in health_states.values() if h == HEALTH_UNKNOWN)
+        
+        # Count entities still in learning phase
+        self._state = sum(
+            1 for eid, h in health_states.items()
+            if h == HEALTH_UNKNOWN or (
+                self._evaluator.get_entity_stats(eid) and
+                self._evaluator.get_entity_stats(eid).get("event_count", 0) < MIN_EVENTS_FOR_NOTIFICATION
+            )
+        )

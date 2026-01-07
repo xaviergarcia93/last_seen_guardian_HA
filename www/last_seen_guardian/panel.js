@@ -110,22 +110,39 @@ class LastSeenGuardianPanel extends HTMLElement {
             const entitiesResponse = await this.hass.callWS({
                 type: "last_seen_guardian/get_entities"
             });
-            this.entities = entitiesResponse.entities || [];
-            
+        
+            // Validate response
+            if (!entitiesResponse || !Array.isArray(entitiesResponse.entities)) {
+                console.error("LSG: Invalid entities response:", entitiesResponse);
+                this._showError("Invalid data received from server");
+                return;
+            }
+        
+            this.entities = entitiesResponse.entities;
+        
             // Load configuration
             const configResponse = await this.hass.callWS({
                 type: "last_seen_guardian/get_config"
             });
-            this.config = configResponse.config || {};
-            
+        
+            // Validate config response
+            if (!configResponse || !configResponse.config) {
+                console.error("LSG: Invalid config response:", configResponse);
+                this.config = {}; // Use empty config as fallback
+            } else {
+                this.config = configResponse.config;
+            }
+        
             // Update last refresh timestamp
             this._lastRefresh = Date.now();
             this._updateRefreshTimestamp();
-            
+        
+            console.log(`LSG: Loaded ${this.entities.length} entities`);
             this._renderActiveTab();
+        
         } catch (error) {
             console.error("LSG: Error loading data:", error);
-            this._showError("Failed to load data. Check logs.");
+            this._showError(`Failed to load data: ${error.message || error}`);
         }
     }
 
