@@ -7,7 +7,7 @@ STORAGE_VERSION = 1
 STORAGE_KEY = f"{DOMAIN}_store"
 
 # Configuration defaults
-DEFAULT_CHECK_INTERVAL = 15  # minutes
+DEFAULT_CHECK_INTERVAL = 60  # minutes
 DEFAULT_THRESHOLD_MULTIPLIER = 2.5
 
 # Panel configuration
@@ -64,7 +64,7 @@ MAX_HISTORY_AGE_DAYS = 90  # max age of history events
 
 # Notifications (v0.6)
 DEFAULT_NOTIFY_SERVICE = "notify.notify"
-NOTIFICATION_THROTTLE_SECONDS = 300  # 5 minutes between same alert
+NOTIFICATION_THROTTLE_SECONDS = 3600  # 5 minutes between same alert
 NOTIFICATION_COOLDOWN_SECONDS = 60  # 1 minute between different alerts
 
 # Battery monitoring (v0.7)

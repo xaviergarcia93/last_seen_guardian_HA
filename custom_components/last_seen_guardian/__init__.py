@@ -145,7 +145,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.debug("Setting up periodic evaluation...")
         
         # Get check interval from configuration
-        check_interval = await _async_get_check_interval(hass, storage)
+        #check_interval = await _async_get_check_interval(hass, storage)
+        
+        # CRITICAL FIX: Start with longer interval (30 min) during learning phase
+        check_interval = 30  # Start with 30 minutes
+        _LOGGER.info("Starting with 30-minute interval during initial learning phase")
         
         async def _periodic_evaluation(now=None) -> None:
             """Execute periodic evaluation of all entities."""

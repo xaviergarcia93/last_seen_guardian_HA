@@ -98,6 +98,10 @@ class LSGEvaluator:
     async def _async_update_entity_learning(
         self, entity_id: str, state: State
     ) -> None:
+        # CRITICAL FIX: Ignore unavailable/unknown states during startup
+        if state.state in ("unavailable", "unknown"):
+            return
+    
         """Update learning state when entity changes."""
         now = time.time()
         
